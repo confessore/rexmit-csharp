@@ -1,4 +1,4 @@
-﻿// Copyright (c) Balanced Solutions Software.  All Rights Reserved.  Licensed under the MIT license.  See License.txt in the project root for license information.
+﻿// Copyright (c) Balanced Solutions Software.  All Rights Reserved.  Licensed under the MIT license.  See LICENSE in the project root for license information.
 
 using System.Net.Http.Headers;
 using Discord;
