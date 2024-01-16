@@ -33,6 +33,7 @@ public class InteractionModule : InteractionModuleBase<ShardedInteractionContext
     [SlashCommand("join", "Joins the voice channel.", runMode: RunMode.Async)]
     public async Task JoinChannel(IVoiceChannel channel = null)
     {
+        await DeferAsync(false);
         // Get the audio channel
         channel = channel ?? (Context.User as IGuildUser)?.VoiceChannel;
         if (channel == null)
@@ -45,5 +46,7 @@ public class InteractionModule : InteractionModuleBase<ShardedInteractionContext
 
         // For the next step with transmitting audio, you would want to pass this Audio Client in to a service.
         _ = await channel.ConnectAsync();
+        _ffmpegService.CreateStream("./");
+        await FollowupAsync($"Joined to voice channel {channel}");
     }
 }
