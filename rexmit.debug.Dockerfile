@@ -1,4 +1,6 @@
 FROM mcr.microsoft.com/dotnet/aspnet:7.0 AS base
+RUN apt-get update && \
+    apt-get install -y libsodium-dev libopus-dev ffmpeg
 WORKDIR /app
 
 FROM mcr.microsoft.com/dotnet/sdk:7.0 AS rexmit-build-base

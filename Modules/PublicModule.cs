@@ -1,5 +1,6 @@
-﻿// Copyright (c) Balanced Solutions Software.  All Rights Reserved.  Licensed under the MIT license.  See LICENSE in the project root for license information.
+﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
+using System.Threading.Tasks;
 using Discord.Commands;
 
 namespace ShardedClient.Modules;
@@ -12,7 +13,7 @@ public class PublicModule : ModuleBase<ShardedCommandContext>
     {
         var msg =
             $@"Hi {Context.User}! There are currently {Context.Client.Shards.Count} shards!
-            This guild is being served by shard number {Context.Client .GetShardFor(Context.Guild) .ShardId}";
+            This guild is being served by shard number {Context.Client.GetShardFor(Context.Guild).ShardId}";
         await ReplyAsync(msg);
     }
 }

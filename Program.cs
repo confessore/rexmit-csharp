@@ -1,6 +1,9 @@
-﻿// Copyright (c) Balanced Solutions Software.  All Rights Reserved.  Licensed under the MIT license.  See LICENSE in the project root for license information.
+﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
+using System;
 using System.Net.Http.Headers;
+using System.Threading;
+using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
 using Discord.Interactions;
@@ -60,6 +63,7 @@ internal class Program
             .AddSingleton(x => new InteractionService(x.GetRequiredService<DiscordShardedClient>()))
             .AddSingleton<CommandHandlingService>()
             .AddSingleton<InteractionHandlingService>()
+            .AddScoped<IFFmpegService, FFmpegService>()
             .AddHttpClient<IGPTService, GPTService>(
                 nameof(GPTService),
                 options =>
