@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
 using System;
-using System.Linq;
-using System.Text;
-using System.Text.Json;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
@@ -50,16 +48,21 @@ public class InteractionModule : InteractionModuleBase<ShardedInteractionContext
 
         // For the next step with transmitting audio, you would want to pass this Audio Client in to a service.
         _ = await channel.ConnectAsync();
-        
-        var builder = new StringBuilder();
-        await foreach (var line in _ffmpegService.DownloadVideoAsync("https://www.youtube.com/watch?v=t4Mc71GjRnU"))
+
+        var array = new List<string>();
+        await foreach (
+            var line in _ffmpegService.DownloadVideoAsync(
+                "https://www.youtube.com/watch?v=t4Mc71GjRnU"
+            )
+        )
         {
-            builder.AppendLine(line);
+            array.Add(line);
         }
 
-        var document = JsonDocument.Parse(builder.ToString());
-        var json = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions() { WriteIndented = true });
-        Console.WriteLine(json);
+        //var document = JsonDocument.Parse(builder.ToString());
+        //var json = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions() { WriteIndented = true });
+        Console.WriteLine(array[0]);
+        await _ffmpegService.CreateStreamAsync(array[0]);
 
         await FollowupAsync($"Joined to voice channel {channel}");
     }
