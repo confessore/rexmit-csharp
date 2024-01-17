@@ -1,9 +1,12 @@
-FROM mcr.microsoft.com/dotnet/aspnet:7.0 AS base
-RUN apt-get update && \
-    apt-get install -y libsodium-dev libopus-dev ffmpeg youtube-dl
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+RUN apt update &&  \
+    apt install -y curl libsodium-dev libopus-dev ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+RUN chmod a+rx /usr/local/bin/yt-dlp
 WORKDIR /app
 
-FROM mcr.microsoft.com/dotnet/sdk:7.0 AS rexmit-build-base
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS rexmit-build-base
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/root/.nuget/packages \
