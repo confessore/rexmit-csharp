@@ -1,13 +1,15 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
 using System.Collections.Generic;
-using System.IO;
+using System.Diagnostics;
 using System.Threading.Tasks;
+using Discord.Audio;
 
 namespace rexmit.Services.Interfaces;
 
 public interface IFFmpegService
 {
-    Task<MemoryStream> CreateStreamAsync(string videoStreamUrl);
+    Process? CreateStream(string videoStreamUrl);
+    Task SendAsync(IAudioClient client, string path);
     IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl);
 }

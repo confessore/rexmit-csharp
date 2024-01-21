@@ -1,35 +1,27 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Discord.Audio;
 using rexmit.Services.Interfaces;
 
 namespace rexmit.Services;
 
 public partial class FFmpegService : IFFmpegService
 {
-    public async Task<MemoryStream> CreateStreamAsync(string videoStreamUrl)
+    public Process? CreateStream(string videoUrl)
     {
-        using var ffmpegProcess = new Process()
+        var info = new ProcessStartInfo()
         {
-            StartInfo = new ProcessStartInfo()
-            {
-                FileName = "ffmpeg",
-                Arguments =
-                    $"-hide_banner -loglevel panic -i \"{videoStreamUrl}\" -ac 2 -f s16le -ar 48000 pipe:1",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true,
-            }
+            FileName = "yt-dlp",
+            Arguments =
+                $"{videoUrl} -o - | \"ffmpeg -hide_banner -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true
         };
-
-        ffmpegProcess.Start();
-        using var memoryStream = new MemoryStream();
-        await ffmpegProcess.StandardOutput.BaseStream.CopyToAsync(memoryStream);
-        return memoryStream;
+        return Process.Start(info);
     }
 
     public async IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl)
@@ -94,6 +86,23 @@ public partial class FFmpegService : IFFmpegService
         }
     }
 
-    [GeneratedRegex(@"""url"": ""([^""]+)""")]
-    private static partial Regex UrlRegex();
+    public async Task SendAsync(IAudioClient client, string path)
+    {
+        // Create FFmpeg using the previous example
+        using (var ffmpeg = CreateStream(path))
+        using (var output = ffmpeg.StandardOutput.BaseStream)
+        using (var discord = client.CreatePCMStream(AudioApplication.Mixed))
+        {
+            try
+            {
+                await output.CopyToAsync(discord);
+                Console.WriteLine("copied to output");
+            }
+            finally
+            {
+                await discord.FlushAsync();
+                Console.WriteLine("flushed");
+            }
+        }
+    }
 }
