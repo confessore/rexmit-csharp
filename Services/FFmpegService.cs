@@ -13,11 +13,13 @@ public partial class FFmpegService : IFFmpegService
 {
     public Process? CreateStream(string videoUrl)
     {
+        var url = $"-c \"yt-dlp -o - {videoUrl} | ffmpeg -hide_banner -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000 pipe:1\"";
+        Console.WriteLine(url);
         var info = new ProcessStartInfo()
         {
-            FileName = "yt-dlp",
+            FileName = "/bin/bash",
             Arguments =
-                $"{videoUrl} -o - | \"ffmpeg -hide_banner -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000\"",
+                url,
             UseShellExecute = false,
             RedirectStandardOutput = true
         };
@@ -26,11 +28,11 @@ public partial class FFmpegService : IFFmpegService
 
     public async IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl)
     {
-        var youtubeDlPath = "yt-dlp"; // Path to youtube-dl executable
+        var youtubeDlPath = "/bin/bash"; // Path to youtube-dl executable
         var processStartInfo = new ProcessStartInfo
         {
             FileName = youtubeDlPath,
-            Arguments = $"-g {videoUrl}",
+            Arguments = $"-c \"yt-dlp -g {videoUrl}\"",
             RedirectStandardOutput = true,
             UseShellExecute = false,
             CreateNoWindow = true,

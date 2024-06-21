@@ -55,7 +55,10 @@ public class InteractionHandlingService
     {
 #if DEBUG
         await _service.RegisterCommandsToGuildAsync(
-            1100799461581668372 /* implement */
+            1100799461581668372 /* rexmit */
+        );
+        await _service.RegisterCommandsToGuildAsync(
+            900113002198626337 /* cupcake */
         );
 #else
         await _service.RegisterCommandsGloballyAsync();

@@ -6,26 +6,20 @@ using Discord;
 using Discord.Commands;
 using Discord.Interactions;
 using rexmit.Services.Interfaces;
+using Victoria.Node;
 using RunMode = Discord.Interactions.RunMode;
 
 namespace rexmit.Modules;
 
 // A display of portability, which shows how minimal the difference between the 2 frameworks is.
-public class InteractionModule : InteractionModuleBase<ShardedInteractionContext>
+public class InteractionModule(
+    IAudioService audioService,
+    IFFmpegService ffmpegService,
+    IGPTService gptService) : InteractionModuleBase<ShardedInteractionContext>
 {
-    private readonly IAudioService _audioService;
-    private readonly IFFmpegService _ffmpegService;
-    private readonly IGPTService _gptService;
-
-    public InteractionModule(
-        IAudioService audioService,
-        IFFmpegService ffmpegService,
-        IGPTService gptService)
-    {
-        _audioService = audioService;
-        _ffmpegService = ffmpegService;
-        _gptService = gptService;
-    }
+    private readonly IAudioService _audioService = audioService;
+    private readonly IFFmpegService _ffmpegService = ffmpegService;
+    private readonly IGPTService _gptService = gptService;
 
     [SlashCommand("info", "Information about this shard.")]
     public async Task InfoAsync([Remainder] string prompt)
@@ -40,6 +34,9 @@ public class InteractionModule : InteractionModuleBase<ShardedInteractionContext
     public async Task JoinChannel(IVoiceChannel channel = null)
     {
         await DeferAsync(false);
+        //await _lavaNode.ConnectAsync();
+        //var voiceState = Context.User as IVoiceState;
+        //await _lavaNode.JoinAsync(voiceState.VoiceChannel, Context.Channel as ITextChannel);
         // Get the audio channel
         channel = channel ?? (Context.User as IGuildUser)?.VoiceChannel;
         if (channel == null)
@@ -67,7 +64,7 @@ public class InteractionModule : InteractionModuleBase<ShardedInteractionContext
         //var document = JsonDocument.Parse(builder.ToString());
         //var json = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions() { WriteIndented = true });
         //Console.WriteLine(array[0]);
-        await _ffmpegService.SendAsync(client, array[0]);
+        await _ffmpegService.SendAsync(client, "https://www.youtube.com/watch?v=t4Mc71GjRnU");
 
         await FollowupAsync($"Joined to voice channel {channel}");
     }
