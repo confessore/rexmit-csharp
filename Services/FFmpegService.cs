@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Discord.Audio;
 using rexmit.Services.Interfaces;
@@ -103,6 +104,26 @@ public partial class FFmpegService : IFFmpegService
             finally
             {
                 await discord.FlushAsync();
+                Console.WriteLine("flushed");
+            }
+        }
+    }
+
+    public async Task SendAsync(IAudioClient client, string path, CancellationToken cancellationToken)
+    {
+        // Create FFmpeg using the previous example
+        using (var ffmpeg = CreateStream(path))
+        using (var output = ffmpeg.StandardOutput.BaseStream)
+        using (var discord = client.CreatePCMStream(AudioApplication.Mixed))
+        {
+            try
+            {
+                await output.CopyToAsync(discord, cancellationToken);
+                Console.WriteLine("copied to output");
+            }
+            finally
+            {
+                await discord.FlushAsync(cancellationToken);
                 Console.WriteLine("flushed");
             }
         }

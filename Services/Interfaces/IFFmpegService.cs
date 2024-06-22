@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Discord.Audio;
 
@@ -11,5 +12,6 @@ public interface IFFmpegService
 {
     Process? CreateStream(string videoStreamUrl);
     Task SendAsync(IAudioClient client, string path);
+    Task SendAsync(IAudioClient client, string path, CancellationToken cancellationToken);
     IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl);
 }

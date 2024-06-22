@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
 using Discord.Interactions;
+using rexmit.Managers;
 using rexmit.Services.Interfaces;
 using Victoria.Node;
 using RunMode = Discord.Interactions.RunMode;
@@ -50,22 +51,31 @@ public class InteractionModule(
         // For the next step with transmitting audio, you would want to pass this Audio Client in to a service.
         var client = await channel.ConnectAsync();
 
-        var array = new List<string>();
-        await foreach (
-            var line in _ffmpegService.DownloadVideoAsync(
-                "https://www.youtube.com/watch?v=t4Mc71GjRnU"
-            )
-        )
+        await FollowupAsync($"Joined to voice channel {channel}");
+    }
+
+    [SlashCommand("queue", "Queues a youtube video.", runMode: RunMode.Async)]
+    public async Task Queue([Remainder] string youtubeUrl, IVoiceChannel channel = null)
+    {
+        await DeferAsync(false);
+        channel = channel ?? (Context.User as IGuildUser)?.VoiceChannel;
+        if (channel == null)
         {
-            //Console.WriteLine(line);
-            array.Add(line);
+            await Context.Channel.SendMessageAsync(
+                "User must be in a voice channel, or a voice channel must be passed as an argument."
+            );
+            return;
         }
 
+        var client = await channel.ConnectAsync();
         //var document = JsonDocument.Parse(builder.ToString());
         //var json = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions() { WriteIndented = true });
         //Console.WriteLine(array[0]);
-        await _ffmpegService.SendAsync(client, "https://www.youtube.com/watch?v=t4Mc71GjRnU");
-
-        await FollowupAsync($"Joined to voice channel {channel}");
+        var threadManager = new ThreadManager(_ffmpegService, client, youtubeUrl);
+        threadManager.StartThread();
+        await FollowupAsync($"Playing {channel}");
+        await Task.Delay(10000);
+        threadManager.StopThread();
+        //await Task.Run(async () => await _ffmpegService.SendAsync(client, youtubeUrl));
     }
 }
