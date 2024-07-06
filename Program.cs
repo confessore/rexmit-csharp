@@ -65,6 +65,7 @@ internal class Program
             .AddSingleton<InteractionHandlingService>()
             .AddScoped<IFFmpegService, FFmpegService>()
             .AddScoped<IAudioService, AudioService>()
+            .AddSingleton<ThreadManagerService>()
             .AddHttpClient<IGPTService, GPTService>(
                 nameof(GPTService),
                 options =>

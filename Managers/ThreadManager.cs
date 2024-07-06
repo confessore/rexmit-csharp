@@ -6,36 +6,74 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Transactions;
 using Discord.Audio;
+using Discord.Interactions;
+using rexmit.Modules;
 using rexmit.Services.Interfaces;
 
 namespace rexmit.Managers
 {
     public class ThreadManager
     {
+        private readonly InteractionModule _interactionModule;
         private readonly IFFmpegService _ffmpegService;
 
         public ThreadManager(
+            InteractionModule interactionModule,
             IFFmpegService ffmpegService,
-            IAudioClient client, string youtubeUrl)
+            IAudioClient client)
         {
+            _interactionModule = interactionModule;
             _ffmpegService = ffmpegService;
             _audioClient = client;
-            _youtubeUrl = youtubeUrl;
+            Id = interactionModule.Context.Channel.Id;
         }
 
-        private IAudioClient _audioClient;
-        private readonly string _youtubeUrl;
+        public ulong Id { get; }
+        private bool _started;
+        public IAudioClient _audioClient;
         private Thread _thread;
         private CancellationTokenSource _cancellationTokenSource;
+        public event Action OnTrackStart;
+        public event Action OnTrackEnd;
+        private List<string> _queue;
+
+        public void Queue(string url)
+        {
+            _queue ??= [];
+            _queue.Add(url);
+        }
+
+        public void Dequeue()
+        {
+            _queue ??= [];
+            _queue.RemoveAt(_queue.Count - 1);
+        }
+
+        public void Skip()
+        {
+            _queue ??= [];
+            _queue.RemoveAt(0);
+            _cancellationTokenSource.Cancel();
+        }
+
+        public void Insert(string url)
+        {
+            _queue ??= [];
+            _queue.Insert(1, url);
+        }
 
         // Start the thread and store its reference
         public void StartThread()
         {
-            _cancellationTokenSource = new CancellationTokenSource();
-            _thread = new Thread(async () => await ThreadWork(_cancellationTokenSource.Token));
-            _thread.Start();
-            Console.WriteLine("Thread started.");
+            if (!_started)
+            {
+                _cancellationTokenSource = new CancellationTokenSource();
+                _thread = new Thread(async () => await ThreadWork(_cancellationTokenSource.Token));
+                _thread.Start();
+                Console.WriteLine("Thread started.");
+            }
         }
 
         // Stop the thread using the stored reference
@@ -60,11 +98,20 @@ namespace rexmit.Managers
         {
             try
             {
+                _started = true;
                 while (!token.IsCancellationRequested)
                 {
                     Console.WriteLine("Thread is working...");
-                    await _ffmpegService.SendAsync(_audioClient, _youtubeUrl, _cancellationTokenSource.Token);
-                    Thread.Sleep(1000); // Simulate work
+
+                    OnTrackStart?.Invoke();
+                    await _interactionModule.Context.Channel.SendMessageAsync($"Now playing {_queue[0]}");
+                    await _ffmpegService.SendAsync(_audioClient, _queue[0], token);
+                    _queue.RemoveAt(0);
+                    OnTrackEnd?.Invoke();
+                    if (_queue.Count == 0)
+                    {
+                        StopThread();
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -73,6 +120,16 @@ namespace rexmit.Managers
             }
             finally
             {
+                _started = false;
+                if (_queue.Count == 0)
+                {
+                    StopThread();
+                }
+                else
+                {
+                    StartThread();
+                }
+
                 Console.WriteLine("Thread has stopped.");
             }
         }

@@ -1,26 +1,33 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
 using Discord.Interactions;
+using Discord.WebSocket;
 using rexmit.Managers;
+using rexmit.Services;
 using rexmit.Services.Interfaces;
-using Victoria.Node;
 using RunMode = Discord.Interactions.RunMode;
 
 namespace rexmit.Modules;
 
 // A display of portability, which shows how minimal the difference between the 2 frameworks is.
 public class InteractionModule(
+    ThreadManagerService threadManagerService,
     IAudioService audioService,
     IFFmpegService ffmpegService,
     IGPTService gptService) : InteractionModuleBase<ShardedInteractionContext>
 {
+    private readonly ThreadManagerService _threadManagerService = threadManagerService;
     private readonly IAudioService _audioService = audioService;
     private readonly IFFmpegService _ffmpegService = ffmpegService;
     private readonly IGPTService _gptService = gptService;
+
+
 
     [SlashCommand("info", "Information about this shard.")]
     public async Task InfoAsync([Remainder] string prompt)
@@ -54,8 +61,8 @@ public class InteractionModule(
         await FollowupAsync($"Joined to voice channel {channel}");
     }
 
-    [SlashCommand("queue", "Queues a youtube video.", runMode: RunMode.Async)]
-    public async Task Queue([Remainder] string youtubeUrl, IVoiceChannel channel = null)
+    [SlashCommand("skip", "Skips the current track.", runMode: RunMode.Async)]
+    public async Task Skip(IVoiceChannel channel = null)
     {
         await DeferAsync(false);
         channel = channel ?? (Context.User as IGuildUser)?.VoiceChannel;
@@ -66,16 +73,58 @@ public class InteractionModule(
             );
             return;
         }
+        var threadManager = _threadManagerService.ThreadManagers.FirstOrDefault(x => x.Id == channel.Id);
+        if (threadManager == null)
+        {
+            return;
+        }
 
-        var client = await channel.ConnectAsync();
+        threadManager.Skip();
+        await FollowupAsync($"Track skipped");
+    }
+
+    [SlashCommand("queue", "Queues a youtube video.", runMode: RunMode.Async)]
+    public async Task Queue([Remainder] string youtubeUrl, IVoiceChannel channel = null)
+    {
+        await DeferAsync(false);
+        channel ??= (Context.User as IGuildUser)?.VoiceChannel;
+        if (channel == null)
+        {
+            await Context.Channel.SendMessageAsync(
+                "User must be in a voice channel, or a voice channel must be passed as an argument."
+            );
+            return;
+        }
+        
         //var document = JsonDocument.Parse(builder.ToString());
         //var json = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions() { WriteIndented = true });
         //Console.WriteLine(array[0]);
-        var threadManager = new ThreadManager(_ffmpegService, client, youtubeUrl);
-        threadManager.StartThread();
+        var threadManager = _threadManagerService.ThreadManagers.FirstOrDefault(x => x.Id == channel.Id);
+        if (threadManager == null)
+        {
+            var client = await channel.ConnectAsync();
+            threadManager = new ThreadManager(this, _ffmpegService, client);
+
+            threadManager.OnTrackStart += () =>
+            {
+                Console.WriteLine("TRACK START");
+            };
+            threadManager.OnTrackEnd += () =>
+            {
+                Console.WriteLine("TRACK END");
+            };
+            _threadManagerService.ThreadManagers.Add(threadManager);
+            threadManager.Queue(youtubeUrl);
+            threadManager.StartThread();
+        }
+        else
+        {
+            threadManager.Queue(youtubeUrl);
+        }
+
         await FollowupAsync($"Playing {channel}");
-        await Task.Delay(10000);
-        threadManager.StopThread();
+        //await Task.Delay(10000);
+        //threadManager.StopThread();
         //await Task.Run(async () => await _ffmpegService.SendAsync(client, youtubeUrl));
     }
 }

@@ -12,7 +12,7 @@ namespace rexmit.Services;
 
 public partial class FFmpegService : IFFmpegService
 {
-    public Process? CreateStream(string videoUrl)
+    public Process CreateStream(string videoUrl)
     {
         var url = $"-c \"yt-dlp -o - {videoUrl} | ffmpeg -hide_banner -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000 pipe:1\"";
         Console.WriteLine(url);
@@ -24,7 +24,7 @@ public partial class FFmpegService : IFFmpegService
             UseShellExecute = false,
             RedirectStandardOutput = true
         };
-        return Process.Start(info);
+        return Process.Start(info) ?? default!;
     }
 
     public async IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl)

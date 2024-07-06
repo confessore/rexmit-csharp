@@ -10,7 +10,7 @@ namespace rexmit.Services.Interfaces;
 
 public interface IFFmpegService
 {
-    Process? CreateStream(string videoStreamUrl);
+    Process CreateStream(string videoStreamUrl);
     Task SendAsync(IAudioClient client, string path);
     Task SendAsync(IAudioClient client, string path, CancellationToken cancellationToken);
     IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl);
