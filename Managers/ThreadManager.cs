@@ -43,12 +43,14 @@ namespace rexmit.Managers
         {
             _queue ??= [];
             _queue.Add(url);
+            StartThread();
         }
 
         public void Dequeue()
         {
             _queue ??= [];
             _queue.RemoveAt(_queue.Count - 1);
+            StartThread();
         }
 
         public void Skip()
@@ -56,12 +58,14 @@ namespace rexmit.Managers
             _queue ??= [];
             _queue.RemoveAt(0);
             _cancellationTokenSource.Cancel();
+            StartThread();
         }
 
         public void Insert(string url)
         {
             _queue ??= [];
             _queue.Insert(1, url);
+            StartThread();
         }
 
         // Start the thread and store its reference

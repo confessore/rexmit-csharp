@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
@@ -115,12 +116,14 @@ public class InteractionModule(
             };
             _threadManagerService.ThreadManagers.Add(threadManager);
             threadManager.Queue(youtubeUrl);
-            threadManager.StartThread();
         }
         else
         {
             threadManager.Queue(youtubeUrl);
         }
+
+        var json = JsonSerializer.Serialize(_threadManagerService.ThreadManagers, new JsonSerializerOptions() { WriteIndented = true });
+        Console.WriteLine(json);
 
         await FollowupAsync($"Playing {channel}");
         //await Task.Delay(10000);
