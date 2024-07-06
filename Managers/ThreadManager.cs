@@ -81,6 +81,7 @@ namespace rexmit.Managers
         {
             if (_cancellationTokenSource != null)
             {
+                _started = false;
                 _cancellationTokenSource.Cancel();
                 _thread.Join(); // Wait for the thread to finish
                 Console.WriteLine("Thread stopped.");
@@ -120,13 +121,13 @@ namespace rexmit.Managers
             }
             finally
             {
-                _started = false;
                 if (_queue.Count == 0)
                 {
                     StopThread();
                 }
                 else
                 {
+                    StopThread();
                     StartThread();
                 }
 
