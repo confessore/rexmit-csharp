@@ -8,7 +8,9 @@ using Discord;
 using Discord.Commands;
 using Discord.Interactions;
 using Discord.WebSocket;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using rexmit.DbContexts;
 using rexmit.Services;
 using rexmit.Services.Interfaces;
 
@@ -52,12 +54,21 @@ internal class Program
         // Tokens should be considered secret data, and never hard-coded.
         await client.LoginAsync(TokenType.Bot, Environment.GetEnvironmentVariable("DISCORD_TOKEN"));
         await client.StartAsync();
-
+        await client.SetCustomStatusAsync("type /help for commands");
         await Task.Delay(Timeout.Infinite);
     }
 
     private ServiceProvider ConfigureServices(DiscordSocketConfig config) =>
         new ServiceCollection()
+            .AddDbContextPool<DefaultDbContext>(options =>
+            {
+                options.UseNpgsql(
+                    Environment.GetEnvironmentVariable("POSTGRES_URL"),
+                    b => b.MigrationsAssembly("rexmit")
+                );
+                //options.EnableSensitiveDataLogging();
+                options.EnableDetailedErrors();
+            })
             .AddSingleton(new DiscordShardedClient(config))
             .AddSingleton<CommandService>()
             .AddSingleton(x => new InteractionService(x.GetRequiredService<DiscordShardedClient>()))

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -30,12 +31,24 @@ public class InteractionModule(
 
 
 
-    [SlashCommand("info", "Information about this shard.")]
-    public async Task InfoAsync([Remainder] string prompt)
+    [SlashCommand("completion", "Chat completion.")]
+    public async Task CompletionAsync([Remainder] string prompt)
     {
         await DeferAsync(false);
         var chatCompletion = await _gptService.RequestGPTChatCompletionAsync(prompt);
         await FollowupAsync(chatCompletion);
+    }
+
+    [SlashCommand("help", "help.")]
+    public async Task HelpAsync()
+    {
+        await DeferAsync(false);
+        var embed = new EmbedBuilder()
+            .AddField("/join", "Joins the voice channel")
+            .AddField("/queue", "queues a song from somewhere")
+            .AddField("/skip", "skips the current song in the queue")
+            .Build();
+        await FollowupAsync(embed: embed);
     }
 
     // The command's Run Mode MUST be set to RunMode.Async, otherwise, being connected to a voice channel will block the gateway thread.
@@ -91,7 +104,7 @@ public class InteractionModule(
         channel ??= (Context.User as IGuildUser)?.VoiceChannel;
         if (channel == null)
         {
-            await Context.Channel.SendMessageAsync(
+            await FollowupAsync(
                 "User must be in a voice channel, or a voice channel must be passed as an argument."
             );
             return;
@@ -103,19 +116,23 @@ public class InteractionModule(
         var threadManager = _threadManagerService.ThreadManagers.FirstOrDefault(x => x.Id == channel.Id);
         if (threadManager == null)
         {
-            var client = await channel.ConnectAsync();
-            threadManager = new ThreadManager(this, _ffmpegService, client);
+            var currentUser = Context.Guild.GetUser(Context.Client.CurrentUser.Id);
+            if (currentUser.VoiceState?.VoiceChannel == null)
+            {
+                var client = await channel.ConnectAsync();
+                threadManager = new ThreadManager(this, _ffmpegService, client);
 
-            threadManager.OnTrackStart += () =>
-            {
-                Console.WriteLine("TRACK START");
-            };
-            threadManager.OnTrackEnd += () =>
-            {
-                Console.WriteLine("TRACK END");
-            };
-            _threadManagerService.ThreadManagers.Add(threadManager);
-            threadManager.Queue(youtubeUrl);
+                threadManager.OnTrackStart += () =>
+                {
+                    Console.WriteLine("TRACK START");
+                };
+                threadManager.OnTrackEnd += () =>
+                {
+                    Console.WriteLine("TRACK END");
+                };
+                _threadManagerService.ThreadManagers.Add(threadManager);
+                threadManager.Queue(youtubeUrl);
+            }
         }
         else
         {

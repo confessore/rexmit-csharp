@@ -23,7 +23,7 @@ public sealed class GPTService : IGPTService
     {
         var data = new
         {
-            model = "gpt-3.5-turbo",
+            model = "gpt-3.5-turbo", 
             //model = "orca-mini-3b.ggmlv3.q4_0.bin",
             //prompt,
             //max_tokens = 750,
