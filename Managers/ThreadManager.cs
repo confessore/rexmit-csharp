@@ -58,6 +58,7 @@ namespace rexmit.Managers
             _queue ??= [];
             _queue.RemoveAt(0);
             _cancellationTokenSource.Cancel();
+            _started = false;
             StartThread();
         }
 
