@@ -27,7 +27,8 @@ internal class Program
         var config = new DiscordSocketConfig
         {
             TotalShards = 1,
-            GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildVoiceStates
+            GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildVoiceStates,
+            EnableVoiceDaveEncryption = true
         };
 
         using var services = ConfigureServices(config);

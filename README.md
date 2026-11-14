@@ -4,7 +4,7 @@ A headless Discord music bot. It needs a Discord bot token, but no database or w
 
 ## Native Ubuntu/Debian install (amd64)
 
-The management script installs a self-contained .NET 8 build, FFmpeg voice dependencies, Deno, yt-dlp, and a systemd service running as a dedicated `rexmit-bot` user. It installs the .NET SDK temporarily only when needed to build; the SDK is removed after publishing.
+The management script installs a self-contained .NET 8 build, FFmpeg voice dependencies, Deno, yt-dlp, the pinned native `libdave` voice-encryption library, and a systemd service running as a dedicated `rexmit-bot` user. It installs the .NET SDK temporarily only when needed to build; the SDK is removed after publishing.
 
 1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), copy its token, and invite it with the `bot` and `applications.commands` scopes. Grant it View Channels, Send Messages, Connect, and Speak permissions.
 2. Clone this repository on the server and enter the checkout.
@@ -28,7 +28,7 @@ The installer currently supports Ubuntu/Debian amd64 with systemd and apt. Run i
 
 ## Docker Compose alternative
 
-Copy `.env.example` to `.env`, set `DISCORD_TOKEN`, then run `docker compose up --build -d`. The image includes .NET, FFmpeg, Deno, and yt-dlp. This is optional; the native install does not require Docker.
+Copy `.env.example` to `.env`, set `DISCORD_TOKEN`, then run `docker compose up --build -d`. The image includes .NET, FFmpeg, Deno, yt-dlp, and the pinned native `libdave` voice-encryption library (Linux amd64 and arm64). This is optional; the native install does not require Docker.
 
 ## Commands
 
@@ -41,5 +41,7 @@ Copy `.env.example` to `.env`, set `DISCORD_TOKEN`, then run `docker compose up 
 Each server has its own player and a maximum of 25 waiting tracks. Playlist links are treated as a single video, not expanded into a playlist. Only HTTPS YouTube and youtu.be links are accepted.
 
 Playback status is exposed through the read-only `IAudioStatusReader` interface. No HTTP listener is started; a future in-process web host can consume the reader without gaining playback controls or requiring a database. A separate web process would need a read-only transport to the bot.
+
+Voice connections use Discord.Net 3.20.2 with DAVE end-to-end encryption enabled. The native installer and Docker image include the matching pinned Linux `libdave` binary; manual deployments must provide a compatible `libdave.so` in the app directory or system library path.
 
 YouTube does not provide a general official API for streaming music into Discord. Playback depends on yt-dlp's YouTube support and may stop working when YouTube changes its service; make sure your use complies with applicable terms and copyright rules.
