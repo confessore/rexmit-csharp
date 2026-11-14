@@ -1,10 +1,6 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
-using System;
 using System.Diagnostics;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Discord.Audio;
 using rexmit.Services.Interfaces;
 
@@ -57,7 +53,13 @@ public sealed class FFmpegService : IFFmpegService
         return new Process { StartInfo = startInfo };
     }
 
-    public async Task SendAsync(IAudioClient client, string youtubeUrl, CancellationToken cancellationToken)
+    public async Task SendAsync(
+        IAudioClient client,
+        string youtubeUrl,
+        Func<CancellationToken, Task> waitUntilResumed,
+        Action<TimeSpan> reportPosition,
+        CancellationToken cancellationToken
+    )
     {
         using var downloader = CreateDownloader(youtubeUrl);
         using var ffmpeg = CreateTranscoder();
@@ -77,7 +79,13 @@ public sealed class FFmpegService : IFFmpegService
                     ffmpeg.StandardInput.BaseStream,
                     cancellationToken
                 );
-                var ffmpegToDiscordTask = ffmpeg.StandardOutput.BaseStream.CopyToAsync(discord, cancellationToken);
+                var ffmpegToDiscordTask = CopyAudioAsync(
+                    ffmpeg.StandardOutput.BaseStream,
+                    discord,
+                    waitUntilResumed,
+                    reportPosition,
+                    cancellationToken
+                );
                 var firstCompletedTask = await Task.WhenAny(downloadToFfmpegTask, ffmpegToDiscordTask);
                 await firstCompletedTask;
 
@@ -120,6 +128,32 @@ public sealed class FFmpegService : IFFmpegService
             Kill(downloader);
             Kill(ffmpeg);
             throw;
+        }
+    }
+
+    private static async Task CopyAudioAsync(
+        Stream source,
+        Stream destination,
+        Func<CancellationToken, Task> waitUntilResumed,
+        Action<TimeSpan> reportPosition,
+        CancellationToken cancellationToken
+    )
+    {
+        var buffer = new byte[3840];
+        long bytesWritten = 0;
+        while (true)
+        {
+            await waitUntilResumed(cancellationToken);
+            var bytesRead = await source.ReadAsync(buffer, cancellationToken);
+            if (bytesRead == 0)
+            {
+                return;
+            }
+
+            await waitUntilResumed(cancellationToken);
+            await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            bytesWritten += bytesRead;
+            reportPosition(TimeSpan.FromSeconds(bytesWritten / 192000d));
         }
     }
 

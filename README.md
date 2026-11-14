@@ -1,47 +1,62 @@
 # Rexmit YouTube Music Bot
 
-A headless Discord music bot. It needs a Discord bot token, but no database or web server. Playback and queue status are in memory and reset when the bot restarts.
+A Discord music bot with an in-server interactive player panel. Playback queues and status are in memory, so they reset when the process restarts. Rexmit needs no database or web server.
 
-## Native Ubuntu/Debian install (amd64)
+## Production installation
 
-The management script installs a self-contained .NET 8 build, FFmpeg voice dependencies, Deno, yt-dlp, the pinned native `libdave` voice-encryption library, and a systemd service running as a dedicated `rexmit-bot` user. It uses the .NET 10 SDK to build the pinned Discord.Net source, installing it temporarily only when no .NET 10 SDK is available; the SDK is removed after publishing.
+The supported deployment is a **native Ubuntu 26.04 amd64 host using systemd**. Containers are not supported or required. The installer creates a locked `rexmit-bot` service account, installs FFmpeg and voice libraries, publishes a self-contained .NET 10 application, installs pinned Deno/yt-dlp binaries, and configures a hardened systemd unit.
 
-1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), copy its token, and invite it with the `bot` and `applications.commands` scopes. Grant it View Channels, Send Messages, Connect, and Speak permissions.
-2. Clone this repository with its pinned Discord.Net source: `git clone --recurse-submodules <repository-url>` and enter the checkout.
-3. Run `sudo bash scripts/rexmit install`. If no token is configured, it prompts for it without echoing and saves it in `/etc/rexmit/rexmit.env` with root-only permissions; then it installs and starts the service and installs the `rexmit` management command in `/usr/local/bin`.
+1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications). Enable the `bot` and `applications.commands` scopes, and grant View Channels, Send Messages, Embed Links, Connect, and Speak permissions.
+2. Clone the repository with its pinned Discord.Net source: `git clone --recurse-submodules <repository-url>`.
+3. From the checkout on the Ubuntu host, run `sudo bash scripts/rexmit install`. If no token is configured, the installer prompts without echo and saves it under `/etc/rexmit` with root-only permissions.
 
-To change the token later, run `sudo rexmit setup`.
+To change the token, run `sudo rexmit setup`. The service reads `/etc/rexmit/rexmit.env`; do not put tokens in the checkout or command line.
 
-Useful commands after installation:
+## Management
 
 ```sh
 sudo rexmit status
-sudo rexmit logs
-sudo rexmit restart
+sudo rexmit doctor
+sudo rexmit logs                 # most recent 100 lines
+sudo rexmit logs --follow
+sudo rexmit restart              # waits for Discord readiness
+sudo rexmit version
 ```
 
-To deploy code updates, update the configured checkout to the revision you want, run `git submodule update --init --recursive` as the checkout owner, then run `sudo rexmit update`. Keep that checkout at its installed path. The command builds it, keeps the current and previous releases under `/opt/rexmit/releases`, and switches the service only after a successful publish. It does not fetch or change Git revisions for you.
+To deploy source changes, update the configured checkout and pinned submodule as the checkout owner, then run `sudo rexmit update`. The manager builds the checkout without running Git operations, stages a release, switches the current symlink, and waits for the new process to report Discord readiness. If startup or readiness fails, it restores the previous release. One previous release is retained; `sudo rexmit rollback` switches back to it explicitly.
 
-`sudo rexmit update-deps` refreshes Deno and yt-dlp and checks apt dependencies. `sudo rexmit uninstall` removes the service, app files, tools, and service account, but preserves the management command, `/etc/rexmit`, and apt packages. Cleanup is explicit: after uninstall, `sudo rexmit remove-deps` offers to remove only named apt packages recorded as newly installed by Rexmit, without running `apt autoremove`; `sudo rexmit purge-config` separately prompts before deleting the saved token; `sudo rexmit purge-manager` removes the global management command when you are done with it.
+`sudo rexmit update-deps` installs supported apt dependencies and refreshes the pinned Deno/yt-dlp tools. Tool binaries and the pinned `libdave` archive are checksum-verified before installation. The .NET 10 SDK is installed only when a source publish needs it and is removed after a successful publish if Rexmit installed it.
 
-The installer currently supports Ubuntu/Debian amd64 with systemd and apt. Run install/update commands with sudo. It requires network access to apt, NuGet, Deno, and GitHub release downloads.
+`sudo rexmit uninstall` removes the service, application releases, managed media tools, and dedicated account, while preserving `/etc/rexmit` and apt packages. Cleanup is explicit: `sudo rexmit remove-deps` simulates apt removal and offers to remove only packages recorded as newly installed by Rexmit; it never runs `apt autoremove`. `sudo rexmit purge-config` separately prompts before deleting the saved token. `sudo rexmit purge-manager` removes the global management command and its installed modules.
 
-## Docker Compose alternative
+The manager supports Ubuntu 26.04 amd64 with systemd and apt. Install/update require network access to apt, NuGet, and pinned GitHub releases. Keep the configured source checkout available for builds; management of an installed service does not otherwise depend on the checkout.
 
-Initialize the pinned Discord.Net source with `git submodule update --init --recursive`, copy `.env.example` to `.env`, set `DISCORD_TOKEN`, then run `docker compose up --build -d`. The image includes .NET, FFmpeg, Deno, yt-dlp, and the pinned native `libdave` voice-encryption library (Linux amd64 and arm64). This is optional; the native install does not require Docker.
+## Development and checks
+
+Requirements: .NET 10 SDK and the initialized Discord.Net submodule.
+
+```sh
+git submodule update --init --recursive
+bash scripts/check.sh
+```
+
+For local execution, set `DISCORD_TOKEN` in the process environment and run `dotnet run --project rexmit.csproj`. Never commit a real token.
 
 ## Commands
 
 - `/play <YouTube URL>` — join your voice channel and add one video.
+- `/panel` — post or refresh the interactive player in the current channel.
 - `/queue` and `/nowplaying` — inspect playback.
 - `/skip`, `/remove <position>`, and `/clear` — manage the queue.
 - `/leave` — stop playback and disconnect.
 - `/help` — show command descriptions.
 
+The player panel shows the current title, artist/uploader, thumbnail, requester, queue, and playback position. Members in the bot's voice channel can add tracks with the panel form, pause/resume, skip, shuffle, move or remove queued tracks, clear the queue, and disconnect. Queue clearing and disconnect ask for confirmation. Position is measured from PCM audio sent to Discord and the panel refreshes about every 10 seconds.
+
 Each server has its own player and a maximum of 25 waiting tracks. Playlist links are treated as a single video, not expanded into a playlist. Only HTTPS YouTube and youtu.be links are accepted.
 
-Playback status is exposed through the read-only `IAudioStatusReader` interface. No HTTP listener is started; a future in-process web host can consume the reader without gaining playback controls or requiring a database. A separate web process would need a read-only transport to the bot.
+Playback status is exposed through the read-only `IAudioStatusReader` interface. No HTTP listener is started; an in-process host can consume the reader without gaining playback controls or requiring a database. A separate web process would need a read-only transport to the bot.
 
-Voice connections use Discord.Net with DAVE end-to-end encryption enabled. Until the next stable Discord.Net package includes the DAVE MLS fix, this repository pins upstream commit `2db165815cbb29846ffb914a475698db5f645b82` as a source submodule. The native installer and Docker image include the pinned Linux `libdave` binary; manual deployments must provide a compatible `libdave.so` in the app directory or system library path.
+Voice connections use Discord.Net with DAVE end-to-end encryption enabled. Until the next stable Discord.Net package includes the required DAVE fix, this repository pins upstream commit `2db165815cbb29846ffb914a475698db5f645b82` as a source submodule. Native installation includes the pinned Linux `libdave` binary; manual deployments must provide a compatible `libdave.so` in the application directory or system library path.
 
 YouTube does not provide a general official API for streaming music into Discord. Playback depends on yt-dlp's YouTube support and may stop working when YouTube changes its service; make sure your use complies with applicable terms and copyright rules.

@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
-using System.Collections.Generic;
-
 namespace rexmit.Services.Interfaces;
 
 public interface IAudioStatusReader
@@ -13,6 +11,19 @@ public interface IAudioStatusReader
 public sealed record GuildPlaybackStatus(
     ulong GuildId,
     ulong VoiceChannelId,
-    string? Current,
-    IReadOnlyList<string> Upcoming
+    PlaybackTrack? Current,
+    IReadOnlyList<PlaybackTrack> Upcoming,
+    TimeSpan Position,
+    bool IsPaused
+);
+
+public sealed record PlaybackTrack(
+    Guid Id,
+    string Url,
+    string Title,
+    string? Artist,
+    string? ThumbnailUrl,
+    TimeSpan? Duration,
+    bool IsLive,
+    string RequestedBy
 );
