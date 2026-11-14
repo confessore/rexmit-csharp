@@ -1,0 +1,513 @@
+#!/usr/bin/env bash
+# REXMIT_MANAGEMENT_SCRIPT=1
+set -Eeuo pipefail
+
+readonly APP_ROOT="/opt/rexmit"
+readonly RELEASES_DIR="$APP_ROOT/releases"
+readonly CURRENT_LINK="$APP_ROOT/current"
+readonly TOOLS_DIR="$APP_ROOT/tools/bin"
+readonly CONFIG_DIR="/etc/rexmit"
+readonly ENV_FILE="$CONFIG_DIR/rexmit.env"
+readonly MANAGER_CONFIG="$CONFIG_DIR/manager.conf"
+readonly SERVICE_FILE="/etc/systemd/system/rexmit.service"
+readonly MANAGER_BIN="/usr/local/bin/rexmit"
+readonly STATE_DIR="/var/lib/rexmit-manager"
+readonly PACKAGE_MANIFEST="$STATE_DIR/apt-packages"
+readonly APT_PACKAGES=(ca-certificates curl ffmpeg libicu-dev libopus-dev libsodium-dev unzip)
+readonly TRACKED_APT_PACKAGES=(curl ffmpeg libicu-dev libopus-dev libsodium-dev unzip)
+
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+SCRIPT_ROOT="$(cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)"
+SOURCE_DIR="$SCRIPT_ROOT"
+if [[ ! -f "$SOURCE_DIR/rexmit.csproj" && -f "$MANAGER_CONFIG" ]]; then
+    IFS= read -r SOURCE_DIR < "$MANAGER_CONFIG" || true
+fi
+
+TEMP_SDK_DIR=""
+TEMP_TOOL_DIR=""
+TEMP_RELEASE_DIR=""
+TEMP_BUILD_DIR=""
+
+cleanup() {
+    [[ -z "$TEMP_SDK_DIR" || ! -d "$TEMP_SDK_DIR" ]] || rm -rf -- "$TEMP_SDK_DIR"
+    [[ -z "$TEMP_TOOL_DIR" || ! -d "$TEMP_TOOL_DIR" ]] || rm -rf -- "$TEMP_TOOL_DIR"
+    [[ -z "$TEMP_RELEASE_DIR" || ! -d "$TEMP_RELEASE_DIR" ]] || rm -rf -- "$TEMP_RELEASE_DIR"
+    [[ -z "$TEMP_BUILD_DIR" || ! -d "$TEMP_BUILD_DIR" ]] || rm -rf -- "$TEMP_BUILD_DIR"
+}
+trap cleanup EXIT
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+Usage: rexmit <command> [--yes]
+
+Commands:
+  setup         Prompt for and securely save the Discord token
+  install       Install native dependencies, publish the bot, and enable systemd
+  update        Publish the checked-out source and activate it
+  update-deps   Update the app-managed Deno/yt-dlp tools and apt dependencies
+  start         Start the systemd service
+  stop          Stop the systemd service
+  restart       Restart the systemd service
+  status        Show service status
+  logs          Follow service logs
+  uninstall     Remove the service and app files; keep configuration/dependencies
+  remove-deps   Remove explicitly recorded apt packages installed by this tool
+  purge-config  Remove saved configuration (separate, destructive action)
+  purge-manager Remove the installed management command after uninstall
+
+Run setup and install from the repository checkout. After that, `rexmit update`
+builds from the configured checkout; it does not fetch or change Git revisions.
+EOF
+}
+
+require_root() {
+    if (( EUID != 0 )); then
+        die "Run this command with sudo, for example: sudo rexmit $1"
+    fi
+}
+
+run_as_root() {
+    if (( EUID == 0 )); then
+        "$@"
+    else
+        command -v sudo >/dev/null 2>&1 || die "sudo is required to save configuration as root."
+        sudo "$@"
+    fi
+}
+
+confirm() {
+    local answer
+    if [[ "${ASSUME_YES:-0}" == "1" ]]; then
+        return 0
+    fi
+    read -r -p "$1 [y/N] " answer
+    [[ "$answer" == "y" || "$answer" == "Y" ]]
+}
+
+check_target() {
+    [[ -r /etc/os-release ]] || die "Cannot identify the operating system."
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "debian" && "${ID_LIKE:-}" != *debian* ]]; then
+        die "Native installation supports Ubuntu/Debian only."
+    fi
+    [[ "$(uname -m)" == "x86_64" ]] || die "Native installation currently supports amd64 (x86_64) only."
+    command -v apt-get >/dev/null 2>&1 || die "apt-get is required."
+    command -v systemctl >/dev/null 2>&1 || die "systemd is required."
+}
+
+check_source() {
+    [[ -f "$SOURCE_DIR/rexmit.csproj" ]] || die "Source checkout not found. Run from the repo or check $MANAGER_CONFIG."
+}
+
+check_config() {
+    [[ -f "$ENV_FILE" ]] || die "No bot config found. Run 'rexmit setup' first."
+    grep -Eq '^DISCORD_TOKEN=[A-Za-z0-9._-]+$' "$ENV_FILE" ||
+        die "DISCORD_TOKEN is missing or malformed. Run 'rexmit setup' again."
+}
+
+setup_config() {
+    local token confirmation
+    if run_as_root test -f "$ENV_FILE" && ! confirm "Replace the saved Discord token? Other config entries will be preserved."; then
+        printf 'Configuration unchanged.\n'
+        return
+    fi
+
+    read -r -s -p "Discord bot token: " token
+    printf '\n'
+    read -r -s -p "Confirm Discord bot token: " confirmation
+    printf '\n'
+    [[ -n "$token" ]] || die "The Discord token cannot be empty."
+    [[ "$token" == "$confirmation" ]] || die "The token entries did not match."
+    [[ "$token" =~ ^[A-Za-z0-9._-]+$ ]] || die "The token contains unsupported characters. No config was written."
+
+    printf '%s\n' "$token" | run_as_root bash -c '
+        set -euo pipefail
+        config_dir=/etc/rexmit
+        config_file="$config_dir/rexmit.env"
+        install -d -o root -g root -m 0700 "$config_dir"
+        temp_file="$(mktemp "$config_dir/.rexmit.env.XXXXXX")"
+        trap '\''rm -f -- "$temp_file"'\'' EXIT
+        if [[ -f "$config_file" ]]; then
+            awk '\''!/^DISCORD_TOKEN=/'\'' "$config_file" > "$temp_file"
+        fi
+        IFS= read -r token
+        printf "DISCORD_TOKEN=%s\n" "$token" >> "$temp_file"
+        chown root:root "$temp_file"
+        chmod 0600 "$temp_file"
+        mv -f -- "$temp_file" "$config_file"
+    '
+    printf 'Token saved to %s with root-only permissions.\n' "$ENV_FILE"
+}
+
+ensure_apt_dependencies() {
+    local package status
+    local newly_installed=()
+    install -d -o root -g root -m 0755 "$STATE_DIR"
+    touch "$PACKAGE_MANIFEST"
+    chmod 0600 "$PACKAGE_MANIFEST"
+
+    for package in "${TRACKED_APT_PACKAGES[@]}"; do
+        status="$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)"
+        if [[ "$status" != "installed" ]]; then
+            newly_installed+=("$package")
+        fi
+    done
+
+    for package in "${newly_installed[@]}"; do
+        if ! grep -Fxq "$package" "$PACKAGE_MANIFEST"; then
+            printf '%s\n' "$package" >> "$PACKAGE_MANIFEST"
+        fi
+    done
+
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${APT_PACKAGES[@]}"
+}
+
+install_audio_tools() {
+    local staging installer attempt
+    TEMP_TOOL_DIR="$(mktemp -d "$APP_ROOT/.tools.XXXXXX")"
+    staging="$TEMP_TOOL_DIR"
+    mkdir -p "$staging/bin"
+    installer="$staging/deno-install.sh"
+
+    curl -fsSL --retry 3 --retry-all-errors https://deno.land/install.sh -o "$installer"
+    for attempt in 1 2 3; do
+        if DENO_INSTALL="$staging" sh "$installer" >/dev/null &&
+            [[ -s "$staging/bin/deno" ]] && "$staging/bin/deno" --version >/dev/null 2>&1; then
+            break
+        fi
+        rm -f -- "$staging/bin/deno"
+        sleep "$attempt"
+    done
+    [[ -x "$staging/bin/deno" ]] || die "Could not download and verify Deno after three attempts."
+    curl -fL --retry 3 --retry-all-errors \
+        https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+        -o "$staging/bin/yt-dlp"
+    chmod 0755 "$staging/bin/deno" "$staging/bin/yt-dlp"
+    [[ -s "$staging/bin/yt-dlp" ]] && "$staging/bin/yt-dlp" --version >/dev/null ||
+        die "Downloaded yt-dlp failed its version check."
+
+    install -d -o root -g root -m 0755 "$TOOLS_DIR"
+    install -o root -g root -m 0755 "$staging/bin/deno" "$TOOLS_DIR/.deno.new"
+    install -o root -g root -m 0755 "$staging/bin/yt-dlp" "$TOOLS_DIR/.yt-dlp.new"
+    mv -f -- "$TOOLS_DIR/.deno.new" "$TOOLS_DIR/deno"
+    mv -f -- "$TOOLS_DIR/.yt-dlp.new" "$TOOLS_DIR/yt-dlp"
+    rm -rf -- "$staging"
+    TEMP_TOOL_DIR=""
+}
+
+ensure_service_user() {
+    local account home shell
+    if account="$(getent passwd rexmit)"; then
+        home="$(cut -d: -f6 <<< "$account")"
+        shell="$(cut -d: -f7 <<< "$account")"
+        [[ "$home" == "/var/lib/rexmit" && "$shell" == */nologin ]] ||
+            die "The 'rexmit' account exists but is not the expected locked service user."
+    else
+        useradd --system --user-group --create-home --home-dir /var/lib/rexmit --shell /usr/sbin/nologin rexmit
+    fi
+    install -d -o rexmit -g rexmit -m 0750 /var/lib/rexmit
+}
+
+install_service_unit() {
+    local temporary
+    temporary="$(mktemp)"
+    cat > "$temporary" <<'EOF'
+[Unit]
+Description=Rexmit Discord music bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rexmit
+Group=rexmit
+EnvironmentFile=/etc/rexmit/rexmit.env
+Environment=HOME=/var/lib/rexmit
+Environment=PATH=/opt/rexmit/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/var/lib/rexmit
+ExecStart=/opt/rexmit/current/rexmit
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=rexmit
+ReadWritePaths=/var/lib/rexmit
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    install -o root -g root -m 0644 "$temporary" "$SERVICE_FILE"
+    rm -f -- "$temporary"
+    systemctl daemon-reload
+}
+
+install_manager() {
+    local temporary manager_source
+    manager_source="$SOURCE_DIR/scripts/rexmit"
+    [[ -f "$manager_source" ]] || manager_source="$SCRIPT_PATH"
+
+    if [[ -e "$MANAGER_BIN" ]] && ! grep -Fq '# REXMIT_MANAGEMENT_SCRIPT=1' "$MANAGER_BIN"; then
+        die "$MANAGER_BIN already exists and is not managed by Rexmit."
+    fi
+    if [[ "$(readlink -f -- "$manager_source")" != "$MANAGER_BIN" ]]; then
+        temporary="$(mktemp /usr/local/bin/.rexmit.XXXXXX)"
+        install -o root -g root -m 0755 "$manager_source" "$temporary"
+        mv -f -- "$temporary" "$MANAGER_BIN"
+    fi
+    temporary="$(mktemp "$CONFIG_DIR/.manager.conf.XXXXXX")"
+    printf '%s\n' "$SOURCE_DIR" > "$temporary"
+    chown root:root "$temporary"
+    chmod 0600 "$temporary"
+    mv -f -- "$temporary" "$MANAGER_CONFIG"
+}
+
+publish_release() {
+    local staging commit release_name dotnet_command install_script
+    check_source
+    mkdir -p "$RELEASES_DIR"
+    TEMP_RELEASE_DIR="$(mktemp -d "$RELEASES_DIR/.staging.XXXXXX")"
+    staging="$TEMP_RELEASE_DIR"
+    TEMP_BUILD_DIR="$(mktemp -d /var/tmp/rexmit-build.XXXXXX)"
+
+    if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q '^8\.'; then
+        dotnet_command="$(command -v dotnet)"
+    else
+        TEMP_SDK_DIR="$(mktemp -d /var/tmp/rexmit-sdk.XXXXXX)"
+        install_script="$TEMP_SDK_DIR/dotnet-install.sh"
+        curl -fsSL --retry 3 --retry-all-errors https://dot.net/v1/dotnet-install.sh -o "$install_script"
+        bash "$install_script" --channel 8.0 --install-dir "$TEMP_SDK_DIR/dotnet" --no-path
+        dotnet_command="$TEMP_SDK_DIR/dotnet/dotnet"
+    fi
+
+    NUGET_PACKAGES="$TEMP_BUILD_DIR/nuget" \
+        NUGET_HTTP_CACHE_PATH="$TEMP_BUILD_DIR/http-cache" \
+        DOTNET_CLI_HOME="$TEMP_BUILD_DIR/dotnet-home" \
+        "$dotnet_command" publish "$SOURCE_DIR/rexmit.csproj" \
+        --configuration Release \
+        --runtime linux-x64 \
+        --self-contained true \
+        --output "$staging" \
+        -p:PublishSingleFile=true \
+        -p:DebugType=None \
+        -p:DebugSymbols=false
+
+    [[ -x "$staging/rexmit" ]] || die "Publish succeeded but the Linux apphost was not produced."
+    commit="$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf 'local')"
+    release_name="$(date -u +%Y%m%dT%H%M%SZ)-$commit-$$"
+    printf '%s\n' "$commit" > "$staging/REVISION"
+    chown -R root:root "$staging"
+    find "$staging" -type d -exec chmod 0755 {} +
+    find "$staging" -type f -exec chmod 0644 {} +
+    chmod 0755 "$staging/rexmit"
+    mv -- "$staging" "$RELEASES_DIR/$release_name"
+    TEMP_RELEASE_DIR=""
+    BUILT_RELEASE="$RELEASES_DIR/$release_name"
+    if [[ -n "$TEMP_SDK_DIR" ]]; then
+        rm -rf -- "$TEMP_SDK_DIR"
+        TEMP_SDK_DIR=""
+    fi
+    rm -rf -- "$TEMP_BUILD_DIR"
+    TEMP_BUILD_DIR=""
+}
+
+prune_releases() {
+    local current directory kept=0
+    current="$(readlink -f -- "$CURRENT_LINK" || true)"
+    while IFS= read -r directory; do
+        [[ "$directory" == "$current" ]] && continue
+        ((kept += 1))
+        if (( kept > 1 )); then
+            rm -rf -- "$directory"
+        fi
+    done < <(find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+}
+
+activate_release() {
+    local release="$1"
+    local previous=""
+    if [[ -L "$CURRENT_LINK" ]]; then
+        previous="$(readlink -f -- "$CURRENT_LINK" || true)"
+    fi
+
+    systemctl stop rexmit.service 2>/dev/null || true
+    ln -s -- "$release" "$APP_ROOT/.current.$$"
+    mv -Tf -- "$APP_ROOT/.current.$$" "$CURRENT_LINK"
+
+    if ! systemctl start rexmit.service; then
+        if [[ -n "$previous" ]]; then
+            ln -s -- "$previous" "$APP_ROOT/.current.rollback.$$"
+            mv -Tf -- "$APP_ROOT/.current.rollback.$$" "$CURRENT_LINK"
+            systemctl start rexmit.service || true
+        fi
+        die "Could not start the new release; the previous release was restored when available."
+    fi
+    prune_releases
+}
+
+install_bot() {
+    require_root install
+    check_target
+    if [[ ! -f "$ENV_FILE" ]] || ! grep -Eq '^DISCORD_TOKEN=[A-Za-z0-9._-]+$' "$ENV_FILE"; then
+        setup_config
+    fi
+    check_config
+    check_source
+    ensure_apt_dependencies
+    install -d -o root -g root -m 0755 "$APP_ROOT" "$RELEASES_DIR"
+    install_audio_tools
+    ensure_service_user
+    publish_release
+    install_service_unit
+    install_manager
+    systemctl enable rexmit.service
+    activate_release "$BUILT_RELEASE"
+    printf 'Installed and started Rexmit. Use `rexmit status` and `rexmit logs`.\n'
+}
+
+update_bot() {
+    require_root update
+    check_target
+    check_config
+    [[ -f "$SERVICE_FILE" ]] || die "Rexmit is not installed. Run 'rexmit install' first."
+    publish_release
+    install_manager
+    activate_release "$BUILT_RELEASE"
+    printf 'Updated Rexmit from %s.\n' "$SOURCE_DIR"
+}
+
+update_dependencies() {
+    require_root update-deps
+    check_target
+    install -d -o root -g root -m 0755 "$APP_ROOT"
+    ensure_apt_dependencies
+    install_audio_tools
+    if systemctl is-active --quiet rexmit.service; then
+        systemctl restart rexmit.service
+    fi
+    printf 'Dependencies updated.\n'
+}
+
+uninstall_bot() {
+    require_root uninstall
+    if ! confirm "Stop Rexmit and remove its service, installed app, tools, and service account? Config and apt packages will be kept."; then
+        printf 'Uninstall cancelled.\n'
+        return
+    fi
+
+    systemctl disable --now rexmit.service 2>/dev/null || true
+    rm -f -- "$SERVICE_FILE"
+    systemctl daemon-reload
+    rm -rf -- "$APP_ROOT" /var/lib/rexmit
+    if getent passwd rexmit >/dev/null; then
+        userdel rexmit
+    fi
+    printf 'Uninstalled Rexmit. Management command and config remain at %s; apt packages remain installed.\n' "$CONFIG_DIR"
+}
+
+remove_dependencies() {
+    require_root remove-deps
+    [[ ! -f "$SERVICE_FILE" ]] || die "Uninstall the bot before removing its audio packages."
+    [[ -s "$PACKAGE_MANIFEST" ]] || {
+        printf 'No apt packages are recorded as newly installed by Rexmit.\n'
+        return
+    }
+
+    mapfile -t packages < "$PACKAGE_MANIFEST"
+    local installed=()
+    local package status
+    for package in "${packages[@]}"; do
+        status="$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true)"
+        [[ "$status" == "installed" ]] && installed+=("$package")
+    done
+    ((${#installed[@]} > 0)) || {
+        rm -f -- "$PACKAGE_MANIFEST"
+        printf 'Recorded apt packages are already absent.\n'
+        return
+    }
+
+    printf 'Packages recorded as newly installed: %s\n' "${installed[*]}"
+    printf 'Apt will show any dependent packages before removal; apt autoremove will not be run.\n'
+    if ! confirm "Remove these packages?"; then
+        printf 'Dependency removal cancelled.\n'
+        return
+    fi
+    apt-get remove --no-auto-remove "${installed[@]}"
+    rm -f -- "$PACKAGE_MANIFEST"
+    printf 'Recorded apt packages removed. Other automatic dependencies may remain.\n'
+}
+
+purge_config() {
+    require_root purge-config
+    [[ ! -f "$SERVICE_FILE" ]] || die "Uninstall the bot before purging its config."
+    [[ -d "$CONFIG_DIR" ]] || {
+        printf 'No Rexmit config directory exists.\n'
+        return
+    }
+    if ! confirm "Permanently delete the saved Discord token and Rexmit config in $CONFIG_DIR?"; then
+        printf 'Config purge cancelled.\n'
+        return
+    fi
+    rm -f -- "$ENV_FILE"
+    rmdir "$CONFIG_DIR" 2>/dev/null || true
+    printf 'Saved bot token deleted; management source configuration was kept.\n'
+}
+
+purge_manager() {
+    require_root purge-manager
+    [[ ! -f "$SERVICE_FILE" ]] || die "Uninstall the bot before removing its management command."
+    if ! confirm "Remove the global Rexmit management command from $MANAGER_BIN?"; then
+        printf 'Management command removal cancelled.\n'
+        return
+    fi
+    if grep -Fq '# REXMIT_MANAGEMENT_SCRIPT=1' "$MANAGER_BIN" 2>/dev/null; then
+        rm -f -- "$MANAGER_BIN"
+    fi
+    rm -f -- "$MANAGER_CONFIG"
+    rmdir "$CONFIG_DIR" 2>/dev/null || true
+    printf 'Management command removed. Saved config and apt packages remain.\n'
+}
+
+command_name="${1:-help}"
+shift || true
+if [[ "${1:-}" == "--yes" ]]; then
+    ASSUME_YES=1
+    shift
+fi
+[[ "$#" -eq 0 ]] || die "Unexpected argument: $1"
+
+case "$command_name" in
+    install|update|update-deps|start|stop|restart|uninstall|remove-deps|purge-config|purge-manager)
+        require_root "$command_name"
+        command -v flock >/dev/null 2>&1 || die "flock is required to safely manage the service."
+        exec 9>/run/lock/rexmit-management.lock
+        flock -n 9 || die "Another Rexmit management command is already running."
+        ;;
+esac
+
+case "$command_name" in
+    setup) setup_config ;;
+    install) install_bot ;;
+    update) update_bot ;;
+    update-deps) update_dependencies ;;
+    start) require_root start; systemctl start rexmit.service ;;
+    stop) require_root stop; systemctl stop rexmit.service ;;
+    restart) require_root restart; systemctl restart rexmit.service ;;
+    status) systemctl status rexmit.service --no-pager ;;
+    logs) journalctl -u rexmit.service -f ;;
+    uninstall) uninstall_bot ;;
+    remove-deps) remove_dependencies ;;
+    purge-config) purge_config ;;
+    purge-manager) purge_manager ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; die "Unknown command: $command_name" ;;
+esac

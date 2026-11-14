@@ -1,14 +1,34 @@
 # Rexmit YouTube Music Bot
 
-A small Discord music bot. Its only required secret is a Discord bot token; playback uses `yt-dlp`, Deno, and `ffmpeg` at runtime.
+A headless Discord music bot. It needs a Discord bot token, but no database or web server. Playback and queue status are in memory and reset when the bot restarts.
 
-## Run with Docker Compose
+## Native Ubuntu/Debian install (amd64)
 
-1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), copy its bot token, and invite it with the `bot` and `applications.commands` scopes. Grant it View Channels, Send Messages, Connect, and Speak permissions.
-2. Copy `.env.example` to `.env` and set `DISCORD_TOKEN`.
-3. Run `docker compose up --build -d`.
+The management script installs a self-contained .NET 8 build, FFmpeg voice dependencies, Deno, yt-dlp, and a systemd service. It installs the .NET SDK temporarily only when needed to build; the SDK is removed after publishing.
 
-The bot registers slash commands globally at startup. Discord may take some time to propagate new or updated global commands.
+1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), copy its token, and invite it with the `bot` and `applications.commands` scopes. Grant it View Channels, Send Messages, Connect, and Speak permissions.
+2. Clone this repository on the server and enter the checkout.
+3. Run `sudo bash scripts/rexmit install`. If no token is configured, it prompts for it without echoing and saves it in `/etc/rexmit/rexmit.env` with root-only permissions; then it installs and starts the service and installs the `rexmit` management command in `/usr/local/bin`.
+
+To change the token later, run `sudo rexmit setup`.
+
+Useful commands after installation:
+
+```sh
+sudo rexmit status
+sudo rexmit logs
+sudo rexmit restart
+```
+
+To deploy code updates, update the configured checkout to the revision you want, then run `sudo rexmit update`. Keep that checkout at its installed path. The command builds it, keeps the current and previous releases under `/opt/rexmit/releases`, and switches the service only after a successful publish. It does not fetch or change Git revisions for you.
+
+`sudo rexmit update-deps` refreshes Deno and yt-dlp and checks apt dependencies. `sudo rexmit uninstall` removes the service, app files, tools, and service account, but preserves the management command, `/etc/rexmit`, and apt packages. Cleanup is explicit: after uninstall, `sudo rexmit remove-deps` offers to remove only named apt packages recorded as newly installed by Rexmit, without running `apt autoremove`; `sudo rexmit purge-config` separately prompts before deleting the saved token; `sudo rexmit purge-manager` removes the global management command when you are done with it.
+
+The installer currently supports Ubuntu/Debian amd64 with systemd and apt. Run install/update commands with sudo. It requires network access to apt, NuGet, Deno, and GitHub release downloads.
+
+## Docker Compose alternative
+
+Copy `.env.example` to `.env`, set `DISCORD_TOKEN`, then run `docker compose up --build -d`. The image includes .NET, FFmpeg, Deno, and yt-dlp. This is optional; the native install does not require Docker.
 
 ## Commands
 
@@ -20,10 +40,6 @@ The bot registers slash commands globally at startup. Discord may take some time
 
 Each server has its own player and a maximum of 25 waiting tracks. Playlist links are treated as a single video, not expanded into a playlist. Only HTTPS YouTube and youtu.be links are accepted.
 
-Playback and queue status are held in memory and reset when the bot restarts. The bot exposes status through the read-only `IAudioStatusReader` interface, but does not start an HTTP server. A future web host running in the same process can use that interface without gaining playback controls or requiring a database; a separate web process would need a read-only transport between it and the bot.
-
-## Local run
-
-Install .NET 8, `ffmpeg`, `yt-dlp`, and Deno 2.3.0 or newer, set `DISCORD_TOKEN`, then run `dotnet run`. On PowerShell, set the token for the current session with `$env:DISCORD_TOKEN = "your-token"`.
+Playback status is exposed through the read-only `IAudioStatusReader` interface. No HTTP listener is started; a future in-process web host can consume the reader without gaining playback controls or requiring a database. A separate web process would need a read-only transport to the bot.
 
 YouTube does not provide a general official API for streaming music into Discord. Playback depends on yt-dlp's YouTube support and may stop working when YouTube changes its service; make sure your use complies with applicable terms and copyright rules.
