@@ -2,149 +2,142 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
 using Discord;
-using Discord.Commands;
 using Discord.Interactions;
-using Discord.WebSocket;
-using rexmit.Managers;
-using rexmit.Services;
 using rexmit.Services.Interfaces;
 using RunMode = Discord.Interactions.RunMode;
 
 namespace rexmit.Modules;
 
-// A display of portability, which shows how minimal the difference between the 2 frameworks is.
-public class InteractionModule(
-    ThreadManagerService threadManagerService,
-    IAudioService audioService,
-    IFFmpegService ffmpegService,
-    IGPTService gptService) : InteractionModuleBase<ShardedInteractionContext>
+public class InteractionModule(IAudioService audioService, IAudioStatusReader audioStatusReader)
+    : InteractionModuleBase<ShardedInteractionContext>
 {
-    private readonly ThreadManagerService _threadManagerService = threadManagerService;
     private readonly IAudioService _audioService = audioService;
-    private readonly IFFmpegService _ffmpegService = ffmpegService;
-    private readonly IGPTService _gptService = gptService;
+    private readonly IAudioStatusReader _audioStatusReader = audioStatusReader;
 
-
-
-    [SlashCommand("completion", "Chat completion.")]
-    public async Task CompletionAsync([Remainder] string prompt)
-    {
-        await DeferAsync(false);
-        var chatCompletion = await _gptService.RequestGPTChatCompletionAsync(prompt);
-        await FollowupAsync(chatCompletion);
-    }
-
-    [SlashCommand("help", "help.")]
+    [SlashCommand("help", "Show music commands.")]
     public async Task HelpAsync()
     {
-        await DeferAsync(false);
+        await DeferAsync(ephemeral: true);
         var embed = new EmbedBuilder()
-            .AddField("/join", "Joins the voice channel")
-            .AddField("/queue", "queues a song from somewhere")
-            .AddField("/skip", "skips the current song in the queue")
+            .AddField("/play <YouTube URL>", "Join your voice channel and add a video to the queue")
+            .AddField("/queue", "Show the current track and waiting queue")
+            .AddField("/nowplaying", "Show the current track")
+            .AddField("/skip", "Skip the current track")
+            .AddField("/remove <position>", "Remove a waiting track (positions start at 1)")
+            .AddField("/clear", "Clear waiting tracks")
+            .AddField("/leave", "Stop playback and leave voice")
             .Build();
-        await FollowupAsync(embed: embed);
+        await FollowupAsync(embed: embed, ephemeral: true);
     }
 
-    // The command's Run Mode MUST be set to RunMode.Async, otherwise, being connected to a voice channel will block the gateway thread.
-    [SlashCommand("join", "Joins the voice channel.", runMode: RunMode.Async)]
-    public async Task JoinChannel(IVoiceChannel channel = null)
+    [SlashCommand("play", "Add a YouTube video to the voice queue.", runMode: RunMode.Async)]
+    public async Task PlayAsync(string url)
     {
-        await DeferAsync(false);
-        //await _lavaNode.ConnectAsync();
-        //var voiceState = Context.User as IVoiceState;
-        //await _lavaNode.JoinAsync(voiceState.VoiceChannel, Context.Channel as ITextChannel);
-        // Get the audio channel
-        channel = channel ?? (Context.User as IGuildUser)?.VoiceChannel;
-        if (channel == null)
+        await DeferAsync(ephemeral: true);
+        var voiceChannel = (Context.User as IGuildUser)?.VoiceChannel;
+        if (Context.Guild is null || voiceChannel is null)
         {
-            await Context.Channel.SendMessageAsync(
-                "User must be in a voice channel, or a voice channel must be passed as an argument."
-            );
+            await FollowupAsync("Join a voice channel in a server first.", ephemeral: true);
             return;
         }
 
-        // For the next step with transmitting audio, you would want to pass this Audio Client in to a service.
-        var client = await channel.ConnectAsync();
-
-        await FollowupAsync($"Joined to voice channel {channel}");
+        try
+        {
+            await _audioService.EnqueueAsync(Context.Guild.Id, voiceChannel, Context.Channel, url);
+            await FollowupAsync("Added to the queue.", ephemeral: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            await FollowupAsync(ex.Message, ephemeral: true);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not queue track: {ex}");
+            await FollowupAsync("Could not join voice or add that track. Check the bot's voice permissions and logs.", ephemeral: true);
+        }
     }
 
-    [SlashCommand("skip", "Skips the current track.", runMode: RunMode.Async)]
-    public async Task Skip(IVoiceChannel channel = null)
+    [SlashCommand("queue", "Show the current track and waiting queue.", runMode: RunMode.Async)]
+    public async Task QueueAsync()
     {
-        await DeferAsync(false);
-        channel = channel ?? (Context.User as IGuildUser)?.VoiceChannel;
-        if (channel == null)
+        await DeferAsync(ephemeral: true);
+        if (Context.Guild is null)
         {
-            await Context.Channel.SendMessageAsync(
-                "User must be in a voice channel, or a voice channel must be passed as an argument."
-            );
-            return;
-        }
-        var threadManager = _threadManagerService.ThreadManagers.FirstOrDefault(x => x.Id == channel.Id);
-        if (threadManager == null)
-        {
+            await FollowupAsync("This command only works in a server.", ephemeral: true);
             return;
         }
 
-        threadManager.Skip();
-        await FollowupAsync($"Track skipped");
+        await FollowupAsync(
+            FormatQueue(_audioStatusReader.GetStatus(Context.Guild.Id)),
+            ephemeral: true,
+            allowedMentions: AllowedMentions.None
+        );
     }
 
-    [SlashCommand("queue", "Queues a youtube video.", runMode: RunMode.Async)]
-    public async Task Queue([Remainder] string youtubeUrl, IVoiceChannel channel = null)
+    [SlashCommand("nowplaying", "Show the current track.", runMode: RunMode.Async)]
+    public async Task NowPlayingAsync()
     {
-        await DeferAsync(false);
-        channel ??= (Context.User as IGuildUser)?.VoiceChannel;
-        if (channel == null)
-        {
-            await FollowupAsync(
-                "User must be in a voice channel, or a voice channel must be passed as an argument."
-            );
-            return;
-        }
-        
-        //var document = JsonDocument.Parse(builder.ToString());
-        //var json = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions() { WriteIndented = true });
-        //Console.WriteLine(array[0]);
-        var threadManager = _threadManagerService.ThreadManagers.FirstOrDefault(x => x.Id == channel.Id);
-        if (threadManager == null)
-        {
-            var currentUser = Context.Guild.GetUser(Context.Client.CurrentUser.Id);
-            if (currentUser.VoiceState?.VoiceChannel == null)
-            {
-                var client = await channel.ConnectAsync();
-                threadManager = new ThreadManager(this, _ffmpegService, client);
-
-                threadManager.OnTrackStart += () =>
-                {
-                    Console.WriteLine("TRACK START");
-                };
-                threadManager.OnTrackEnd += () =>
-                {
-                    Console.WriteLine("TRACK END");
-                };
-                _threadManagerService.ThreadManagers.Add(threadManager);
-                threadManager.Queue(youtubeUrl);
-            }
-        }
-        else
-        {
-            threadManager.Queue(youtubeUrl);
-        }
-
-        var json = JsonSerializer.Serialize(_threadManagerService.ThreadManagers, new JsonSerializerOptions() { WriteIndented = true });
-        Console.WriteLine(json);
-
-        await FollowupAsync($"Playing {channel}");
-        //await Task.Delay(10000);
-        //threadManager.StopThread();
-        //await Task.Run(async () => await _ffmpegService.SendAsync(client, youtubeUrl));
+        await DeferAsync(ephemeral: true);
+        var current = Context.Guild is null ? null : _audioStatusReader.GetStatus(Context.Guild.Id)?.Current;
+        await FollowupAsync(
+            current is null ? "Nothing is playing." : $"Now playing: {Shorten(current)}",
+            ephemeral: true,
+            allowedMentions: AllowedMentions.None
+        );
     }
+
+    [SlashCommand("skip", "Skip the current track.", runMode: RunMode.Async)]
+    public async Task SkipAsync()
+    {
+        await DeferAsync(ephemeral: true);
+        var skipped = Context.Guild is not null && _audioService.Skip(Context.Guild.Id);
+        await FollowupAsync(skipped ? "Skipped." : "Nothing is playing or queued.", ephemeral: true);
+    }
+
+    [SlashCommand("remove", "Remove a waiting track by its queue position.", runMode: RunMode.Async)]
+    public async Task RemoveAsync(int position)
+    {
+        await DeferAsync(ephemeral: true);
+        var removed = Context.Guild is not null && _audioService.Remove(Context.Guild.Id, position);
+        await FollowupAsync(removed ? "Removed from the queue." : "That queue position does not exist.", ephemeral: true);
+    }
+
+    [SlashCommand("clear", "Clear waiting tracks.", runMode: RunMode.Async)]
+    public async Task ClearAsync()
+    {
+        await DeferAsync(ephemeral: true);
+        var removed = Context.Guild is null ? 0 : _audioService.Clear(Context.Guild.Id);
+        await FollowupAsync($"Removed {removed} waiting track(s).", ephemeral: true);
+    }
+
+    [SlashCommand("leave", "Stop playback and leave voice.", runMode: RunMode.Async)]
+    public async Task LeaveAsync()
+    {
+        await DeferAsync(ephemeral: true);
+        var left = Context.Guild is not null && await _audioService.LeaveAsync(Context.Guild.Id);
+        await FollowupAsync(left ? "Stopped playback and left voice." : "I am not playing in this server.", ephemeral: true);
+    }
+
+    private static string FormatQueue(GuildPlaybackStatus? snapshot)
+    {
+        var lines = new List<string>();
+        if (snapshot?.Current is not null)
+        {
+            lines.Add($"**Now playing:** {Shorten(snapshot.Current)}");
+        }
+
+        var upcoming = snapshot?.Upcoming ?? Array.Empty<string>();
+        lines.AddRange(upcoming.Take(10).Select((track, index) => $"{index + 1}. {Shorten(track)}"));
+        if (upcoming.Count > 10)
+        {
+            lines.Add($"…and {upcoming.Count - 10} more.");
+        }
+
+        return lines.Count == 0 ? "The queue is empty." : string.Join('\n', lines);
+    }
+
+    private static string Shorten(string url) => url.Length <= 150 ? url : $"{url[..147]}…";
 }

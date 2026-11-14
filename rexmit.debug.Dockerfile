@@ -1,28 +1,19 @@
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
-RUN apt update &&  \
-    apt install -y curl libsodium-dev libopus-dev ffmpeg && \
+FROM mcr.microsoft.com/dotnet/runtime:8.0 AS base
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates libsodium-dev libopus-dev ffmpeg && \
+    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
     rm -rf /var/lib/apt/lists/*
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-RUN chmod a+rx /usr/local/bin/yt-dlp
 WORKDIR /app
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS rexmit-build-base
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
+COPY rexmit.csproj ./
+RUN dotnet restore ./rexmit.csproj
 COPY . .
-RUN --mount=type=cache,target=/root/.nuget/packages \
-	dotnet restore ./rexmit.sln
+RUN dotnet publish ./rexmit.csproj -c Release -o /app/publish --no-restore
 
-FROM rexmit-build-base AS rexmit-build
-RUN --mount=type=cache,target=/root/.nuget/packages \
-	dotnet build -c Debug --no-restore ./rexmit.sln
-
-FROM rexmit-build AS rexmit-test
-RUN dotnet test -c Debug --no-build --no-restore ./rexmit.sln
-
-FROM rexmit-build AS publish-rexmit
-RUN --mount=type=cache,target=/root/.nuget/packages \
-	dotnet publish -c Debug --no-build --no-restore -o /app ./rexmit.csproj
-
-FROM base AS final-rexmit
-COPY --from=publish-rexmit /app .
+FROM base AS final
+COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "rexmit.dll"]

@@ -24,11 +24,8 @@ public class InteractionHandlingService
         _service.Log += LogAsync;
         _client.InteractionCreated += OnInteractionAsync;
         _client.ShardReady += ReadyAsync;
-        // For examples on how to handle post execution,
-        // see the InteractionFramework samples.
     }
 
-    // Register all modules, and add the commands from these modules to either guild or globally depending on the build state.
     public async Task InitializeAsync()
     {
         await _service.AddModulesAsync(typeof(InteractionHandlingService).Assembly, _provider);
@@ -36,32 +33,18 @@ public class InteractionHandlingService
 
     private async Task OnInteractionAsync(SocketInteraction interaction)
     {
-        _ = Task.Run(async () =>
-        {
-            var context = new ShardedInteractionContext(_client, interaction);
-            await _service.ExecuteCommandAsync(context, _provider);
-        });
-        await Task.CompletedTask;
+        var context = new ShardedInteractionContext(_client, interaction);
+        await _service.ExecuteCommandAsync(context, _provider);
     }
 
     private Task LogAsync(LogMessage log)
     {
         Console.WriteLine(log.ToString());
-
         return Task.CompletedTask;
     }
 
-    private async Task ReadyAsync(DiscordSocketClient _)
+    private Task ReadyAsync(DiscordSocketClient _)
     {
-#if DEBUG
-        await _service.RegisterCommandsToGuildAsync(
-            1100799461581668372 // rexmit
-        );
-        await _service.RegisterCommandsToGuildAsync(
-            900113002198626337 // cupcake 
-        );
-#else
-        await _service.RegisterCommandsGloballyAsync();
-#endif
+        return _service.RegisterCommandsGloballyAsync();
     }
 }

@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Balanced Solutions Software. All Rights Reserved. Licensed under the MIT license. See LICENSE in the project root for license information.
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Discord.Audio;
@@ -10,122 +10,121 @@ using rexmit.Services.Interfaces;
 
 namespace rexmit.Services;
 
-public partial class FFmpegService : IFFmpegService
+public sealed class FFmpegService : IFFmpegService
 {
-    public Process CreateStream(string videoUrl)
+    private static Process CreateStream(string videoStreamUrl)
     {
-        var url = $"-c \"yt-dlp -o - {videoUrl} | ffmpeg -hide_banner -loglevel panic -i pipe:0 -ac 2 -f s16le -ar 48000 pipe:1\"";
-        Console.WriteLine(url);
-        var info = new ProcessStartInfo()
+        var startInfo = new ProcessStartInfo
         {
-            FileName = "/bin/bash",
-            Arguments =
-                url,
+            FileName = "ffmpeg",
             UseShellExecute = false,
-            RedirectStandardOutput = true
-        };
-        return Process.Start(info) ?? default!;
-    }
-
-    public async IAsyncEnumerable<string> DownloadVideoAsync(string videoUrl)
-    {
-        var youtubeDlPath = "/bin/bash"; // Path to youtube-dl executable
-        var processStartInfo = new ProcessStartInfo
-        {
-            FileName = youtubeDlPath,
-            Arguments = $"-c \"yt-dlp -g {videoUrl}\"",
             RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
         };
-
-        using var process = new Process
+        foreach (var argument in new[]
         {
-            StartInfo = processStartInfo,
-            EnableRaisingEvents = true,
-        };
-
-        process.Start();
-
-        using var reader = process.StandardOutput;
-        while (!reader.EndOfStream)
+            "-hide_banner", "-loglevel", "error", "-i", videoStreamUrl,
+            "-vn", "-ac", "2", "-ar", "48000", "-f", "s16le", "pipe:1"
+        })
         {
-            var line = await reader.ReadLineAsync();
-            if (!string.IsNullOrWhiteSpace(line))
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start ffmpeg.");
+    }
+
+    public async Task SendAsync(IAudioClient client, string youtubeUrl, CancellationToken cancellationToken)
+    {
+        var streamUrl = await ResolveStreamUrlAsync(youtubeUrl, cancellationToken);
+        using var ffmpeg = CreateStream(streamUrl);
+        var stderrTask = ffmpeg.StandardError.ReadToEndAsync();
+        using var discord = client.CreatePCMStream(AudioApplication.Mixed);
+        try
+        {
+            await ffmpeg.StandardOutput.BaseStream.CopyToAsync(discord, cancellationToken);
+            await ffmpeg.WaitForExitAsync(cancellationToken);
+            var error = await stderrTask;
+            if (ffmpeg.ExitCode != 0)
             {
-                yield return line;
+                throw new InvalidOperationException($"ffmpeg exited with code {ffmpeg.ExitCode}: {error.Trim()}");
             }
+        }
+        catch (OperationCanceledException)
+        {
+            Kill(ffmpeg);
+            throw;
+        }
+        finally
+        {
+            await discord.FlushAsync();
         }
     }
 
-    public static async IAsyncEnumerable<string> DownloadVideosAsync(string playlistUrl)
+    private static async Task<string> ResolveStreamUrlAsync(string youtubeUrl, CancellationToken cancellationToken)
     {
-        var youtubeDlPath = "yt-dlp"; // Path to youtube-dl executable
-        var processStartInfo = new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
-            FileName = youtubeDlPath,
-            Arguments = $"-g --flat-playlist {playlistUrl}",
+            FileName = "yt-dlp",
+            UseShellExecute = false,
             RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
         };
-
-        using var process = new Process
+        foreach (var argument in new[]
         {
-            StartInfo = processStartInfo,
-            EnableRaisingEvents = true,
-        };
-
-        process.Start();
-
-        using var reader = process.StandardOutput;
-        while (!reader.EndOfStream)
+            "--no-warnings", "--no-playlist", "--js-runtimes", "deno", "--format", "bestaudio/best", "--get-url", "--", youtubeUrl
+        })
         {
-            var line = await reader.ReadLineAsync();
-            if (!string.IsNullOrWhiteSpace(line))
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Could not start yt-dlp.");
+        }
+
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken);
+            var error = await stderrTask;
+            if (process.ExitCode != 0)
             {
-                yield return line;
+                throw new InvalidOperationException($"yt-dlp exited with code {process.ExitCode}: {error.Trim()}");
             }
+
+            var streamUrl = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(streamUrl))
+            {
+                throw new InvalidOperationException("yt-dlp did not return an audio stream URL.");
+            }
+
+            return streamUrl;
+        }
+        catch (OperationCanceledException)
+        {
+            Kill(process);
+            throw;
         }
     }
 
-    public async Task SendAsync(IAudioClient client, string path)
+    private static void Kill(Process process)
     {
-        // Create FFmpeg using the previous example
-        using (var ffmpeg = CreateStream(path))
-        using (var output = ffmpeg.StandardOutput.BaseStream)
-        using (var discord = client.CreatePCMStream(AudioApplication.Mixed))
+        try
         {
-            try
+            if (!process.HasExited)
             {
-                await output.CopyToAsync(discord);
-                Console.WriteLine("copied to output");
-            }
-            finally
-            {
-                await discord.FlushAsync();
-                Console.WriteLine("flushed");
+                process.Kill(entireProcessTree: true);
             }
         }
-    }
-
-    public async Task SendAsync(IAudioClient client, string path, CancellationToken cancellationToken)
-    {
-        // Create FFmpeg using the previous example
-        using (var ffmpeg = CreateStream(path))
-        using (var output = ffmpeg.StandardOutput.BaseStream)
-        using (var discord = client.CreatePCMStream(AudioApplication.Mixed))
+        catch (InvalidOperationException)
         {
-            try
-            {
-                await output.CopyToAsync(discord, cancellationToken);
-                Console.WriteLine("copied to output");
-            }
-            finally
-            {
-                await discord.FlushAsync(cancellationToken);
-                Console.WriteLine("flushed");
-            }
+            // Process exited between the check and Kill.
         }
     }
 }
