@@ -4,7 +4,7 @@ A headless Discord music bot. It needs a Discord bot token, but no database or w
 
 ## Native Ubuntu/Debian install (amd64)
 
-The management script installs a self-contained .NET 8 build, FFmpeg voice dependencies, Deno, yt-dlp, the pinned native `libdave` voice-encryption library, and a systemd service running as a dedicated `rexmit-bot` user. It installs the .NET SDK temporarily only when needed to build; the SDK is removed after publishing.
+The management script installs a self-contained .NET 8 build, FFmpeg voice dependencies, Deno, yt-dlp, the pinned native `libdave` voice-encryption library, and a systemd service running as a dedicated `rexmit-bot` user. It uses the .NET 10 SDK to build the pinned Discord.Net source, installing it temporarily only when no .NET 10 SDK is available; the SDK is removed after publishing.
 
 1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), copy its token, and invite it with the `bot` and `applications.commands` scopes. Grant it View Channels, Send Messages, Connect, and Speak permissions.
 2. Clone this repository with its pinned Discord.Net source: `git clone --recurse-submodules <repository-url>` and enter the checkout.

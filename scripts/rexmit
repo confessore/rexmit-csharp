@@ -283,13 +283,13 @@ publish_release() {
     staging="$TEMP_RELEASE_DIR"
     TEMP_BUILD_DIR="$(mktemp -d /var/tmp/rexmit-build.XXXXXX)"
 
-    if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q '^8\.'; then
+    if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then
         dotnet_command="$(command -v dotnet)"
     else
         TEMP_SDK_DIR="$(mktemp -d /var/tmp/rexmit-sdk.XXXXXX)"
         install_script="$TEMP_SDK_DIR/dotnet-install.sh"
         curl -fsSL --retry 3 --retry-all-errors https://dot.net/v1/dotnet-install.sh -o "$install_script"
-        bash "$install_script" --channel 8.0 --install-dir "$TEMP_SDK_DIR/dotnet" --no-path
+        bash "$install_script" --channel 10.0 --install-dir "$TEMP_SDK_DIR/dotnet" --no-path
         dotnet_command="$TEMP_SDK_DIR/dotnet/dotnet"
     fi
 
