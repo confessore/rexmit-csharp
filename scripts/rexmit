@@ -204,15 +204,15 @@ install_audio_tools() {
 
 ensure_service_user() {
     local account home shell
-    if account="$(getent passwd rexmit)"; then
+    if account="$(getent passwd rexmit-bot)"; then
         home="$(cut -d: -f6 <<< "$account")"
         shell="$(cut -d: -f7 <<< "$account")"
         [[ "$home" == "/var/lib/rexmit" && "$shell" == */nologin ]] ||
-            die "The 'rexmit' account exists but is not the expected locked service user."
+            die "The 'rexmit-bot' account exists but is not the expected locked service user."
     else
-        useradd --system --user-group --create-home --home-dir /var/lib/rexmit --shell /usr/sbin/nologin rexmit
+        useradd --system --user-group --create-home --home-dir /var/lib/rexmit --shell /usr/sbin/nologin rexmit-bot
     fi
-    install -d -o rexmit -g rexmit -m 0750 /var/lib/rexmit
+    install -d -o rexmit-bot -g rexmit-bot -m 0750 /var/lib/rexmit
 }
 
 install_service_unit() {
@@ -226,8 +226,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=rexmit
-Group=rexmit
+User=rexmit-bot
+Group=rexmit-bot
 EnvironmentFile=/etc/rexmit/rexmit.env
 Environment=HOME=/var/lib/rexmit
 Environment=PATH=/opt/rexmit/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -408,8 +408,8 @@ uninstall_bot() {
     rm -f -- "$SERVICE_FILE"
     systemctl daemon-reload
     rm -rf -- "$APP_ROOT" /var/lib/rexmit
-    if getent passwd rexmit >/dev/null; then
-        userdel rexmit
+    if getent passwd rexmit-bot >/dev/null; then
+        userdel rexmit-bot
     fi
     printf 'Uninstalled Rexmit. Management command and config remain at %s; apt packages remain installed.\n' "$CONFIG_DIR"
 }
