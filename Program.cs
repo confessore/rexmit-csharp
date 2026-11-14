@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Discord;
 using Discord.Interactions;
+using Discord.LibDave;
+using Discord.LibDave.Binding;
 using Discord.WebSocket;
 using Microsoft.Extensions.DependencyInjection;
 using rexmit.Services;
@@ -18,6 +20,15 @@ internal class Program
 
     private static async Task MainAsync()
     {
+        // Native verbose logs can dump full MLS payloads into the service journal.
+        Dave.SetLogSink((severity, _, lineNumber, message) =>
+        {
+            if ((severity == LoggingSeverity.Warning || severity == LoggingSeverity.Error) && message.Length <= 256)
+            {
+                Console.WriteLine($"libdave {severity} (line {lineNumber}): {message}");
+            }
+        });
+
         var token = Environment.GetEnvironmentVariable("DISCORD_TOKEN");
         if (string.IsNullOrWhiteSpace(token))
         {

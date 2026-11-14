@@ -1,0 +1,3 @@
+[submodule "discord-net-hotfix"]
+	path = third_party/Discord.Net
+	url = https://github.com/discord-net/Discord.Net.git

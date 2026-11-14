@@ -105,6 +105,8 @@ check_target() {
 
 check_source() {
     [[ -f "$SOURCE_DIR/rexmit.csproj" ]] || die "Source checkout not found. Run from the repo or check $MANAGER_CONFIG."
+    [[ -f "$SOURCE_DIR/third_party/Discord.Net/src/Discord.Net.WebSocket/Discord.Net.WebSocket.csproj" ]] ||
+        die "The pinned Discord.Net source is missing. Run 'git -C $SOURCE_DIR submodule update --init --recursive' as the checkout owner."
 }
 
 check_config() {
