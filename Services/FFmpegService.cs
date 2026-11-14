@@ -12,56 +12,30 @@ namespace rexmit.Services;
 
 public sealed class FFmpegService : IFFmpegService
 {
-    private static Process CreateStream(string videoStreamUrl)
+    private static Process CreateTranscoder()
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = "ffmpeg",
             UseShellExecute = false,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
         foreach (var argument in new[]
         {
-            "-hide_banner", "-loglevel", "error", "-i", videoStreamUrl,
+            "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
             "-vn", "-ac", "2", "-ar", "48000", "-f", "s16le", "pipe:1"
         })
         {
             startInfo.ArgumentList.Add(argument);
         }
 
-        return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start ffmpeg.");
+        return new Process { StartInfo = startInfo };
     }
 
-    public async Task SendAsync(IAudioClient client, string youtubeUrl, CancellationToken cancellationToken)
-    {
-        var streamUrl = await ResolveStreamUrlAsync(youtubeUrl, cancellationToken);
-        using var ffmpeg = CreateStream(streamUrl);
-        var stderrTask = ffmpeg.StandardError.ReadToEndAsync();
-        using var discord = client.CreatePCMStream(AudioApplication.Mixed);
-        try
-        {
-            await ffmpeg.StandardOutput.BaseStream.CopyToAsync(discord, cancellationToken);
-            await ffmpeg.WaitForExitAsync(cancellationToken);
-            var error = await stderrTask;
-            if (ffmpeg.ExitCode != 0)
-            {
-                throw new InvalidOperationException($"ffmpeg exited with code {ffmpeg.ExitCode}: {error.Trim()}");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            Kill(ffmpeg);
-            throw;
-        }
-        finally
-        {
-            await discord.FlushAsync();
-        }
-    }
-
-    private static async Task<string> ResolveStreamUrlAsync(string youtubeUrl, CancellationToken cancellationToken)
+    private static Process CreateDownloader(string youtubeUrl)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -73,45 +47,89 @@ public sealed class FFmpegService : IFFmpegService
         };
         foreach (var argument in new[]
         {
-            "--no-warnings", "--no-playlist", "--js-runtimes", "deno", "--format", "bestaudio/best", "--get-url", "--", youtubeUrl
+            "--no-warnings", "--no-progress", "--no-playlist", "--js-runtimes", "deno",
+            "--format", "bestaudio/best", "--output", "-", "--", youtubeUrl
         })
         {
             startInfo.ArgumentList.Add(argument);
         }
 
-        using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Could not start yt-dlp.");
-        }
+        return new Process { StartInfo = startInfo };
+    }
 
-        var stderrTask = process.StandardError.ReadToEndAsync();
+    public async Task SendAsync(IAudioClient client, string youtubeUrl, CancellationToken cancellationToken)
+    {
+        using var downloader = CreateDownloader(youtubeUrl);
+        using var ffmpeg = CreateTranscoder();
         try
         {
-            var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var error = await stderrTask;
-            if (process.ExitCode != 0)
+            if (!ffmpeg.Start() || !downloader.Start())
             {
-                throw new InvalidOperationException($"yt-dlp exited with code {process.ExitCode}: {error.Trim()}");
+                throw new InvalidOperationException("Could not start the audio pipeline.");
             }
 
-            var streamUrl = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Trim())
-                .FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(streamUrl))
+            var downloaderErrorTask = downloader.StandardError.ReadToEndAsync();
+            var ffmpegErrorTask = ffmpeg.StandardError.ReadToEndAsync();
+            using var discord = client.CreatePCMStream(AudioApplication.Mixed);
+            try
             {
-                throw new InvalidOperationException("yt-dlp did not return an audio stream URL.");
-            }
+                var downloadToFfmpegTask = downloader.StandardOutput.BaseStream.CopyToAsync(
+                    ffmpeg.StandardInput.BaseStream,
+                    cancellationToken
+                );
+                var ffmpegToDiscordTask = ffmpeg.StandardOutput.BaseStream.CopyToAsync(discord, cancellationToken);
+                var firstCompletedTask = await Task.WhenAny(downloadToFfmpegTask, ffmpegToDiscordTask);
+                await firstCompletedTask;
 
-            return streamUrl;
+                if (ReferenceEquals(firstCompletedTask, downloadToFfmpegTask))
+                {
+                    ffmpeg.StandardInput.Close();
+                    await ffmpegToDiscordTask;
+                }
+                else
+                {
+                    await ffmpeg.WaitForExitAsync(cancellationToken);
+                    await downloadToFfmpegTask;
+                }
+
+                await downloader.WaitForExitAsync(cancellationToken);
+                await ffmpeg.WaitForExitAsync(cancellationToken);
+                var downloaderError = await downloaderErrorTask;
+                var ffmpegError = await ffmpegErrorTask;
+                if (downloader.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"yt-dlp exited with code {downloader.ExitCode}: {SanitizeErrorOutput(downloaderError)}"
+                    );
+                }
+
+                if (ffmpeg.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"ffmpeg exited with code {ffmpeg.ExitCode}: {SanitizeErrorOutput(ffmpegError)}"
+                    );
+                }
+            }
+            finally
+            {
+                await discord.FlushAsync();
+            }
         }
-        catch (OperationCanceledException)
+        catch
         {
-            Kill(process);
+            Kill(downloader);
+            Kill(ffmpeg);
             throw;
         }
     }
+
+    private static string SanitizeErrorOutput(string error) => string.Join(
+        Environment.NewLine,
+        error.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => !line.Contains("http://", StringComparison.OrdinalIgnoreCase) &&
+                           !line.Contains("https://", StringComparison.OrdinalIgnoreCase))
+    ).Trim();
 
     private static void Kill(Process process)
     {
