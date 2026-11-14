@@ -304,7 +304,8 @@ publish_release() {
         -p:TargetFrameworks=net8.0 \
         -p:PublishSingleFile=true \
         -p:DebugType=None \
-        -p:DebugSymbols=false
+        -p:DebugSymbols=false \
+        9>&-
 
     local libdave_archive="$TEMP_BUILD_DIR/libdave.zip"
     curl -fL --retry 3 --retry-all-errors "$LIBDAVE_URL" -o "$libdave_archive"
