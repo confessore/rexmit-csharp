@@ -23,7 +23,7 @@ WORKDIR /src
 COPY rexmit.csproj ./
 RUN dotnet restore ./rexmit.csproj
 COPY . .
-RUN dotnet publish ./rexmit.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish ./rexmit.csproj -c Release -o /app/publish --no-restore -p:TargetFrameworks=net8.0
 
 FROM base AS final
 COPY --from=build /app/publish .

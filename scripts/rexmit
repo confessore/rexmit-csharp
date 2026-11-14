@@ -301,6 +301,7 @@ publish_release() {
         --runtime linux-x64 \
         --self-contained true \
         --output "$staging" \
+        -p:TargetFrameworks=net8.0 \
         -p:PublishSingleFile=true \
         -p:DebugType=None \
         -p:DebugSymbols=false
