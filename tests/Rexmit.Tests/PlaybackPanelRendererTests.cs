@@ -11,6 +11,23 @@ namespace Rexmit.Tests;
 public sealed class PlaybackPanelRendererTests
 {
     [TestMethod]
+    public void CreateComponents_WithoutPlayer_DisablesPlayerControlsAndDisconnect()
+    {
+        var buttons = PlaybackPanelRenderer.CreateComponents(null).Components
+            .OfType<ActionRowComponent>()
+            .SelectMany(row => row.Components)
+            .OfType<ButtonComponent>()
+            .ToDictionary(button => button.CustomId);
+
+        Assert.IsTrue(buttons["rexmit:pause"].IsDisabled);
+        Assert.IsTrue(buttons["rexmit:skip"].IsDisabled);
+        Assert.IsTrue(buttons["rexmit:shuffle"].IsDisabled);
+        Assert.IsTrue(buttons["rexmit:clear"].IsDisabled);
+        Assert.IsTrue(buttons["rexmit:leave"].IsDisabled);
+        Assert.IsFalse(buttons["rexmit:add"].IsDisabled);
+    }
+
+    [TestMethod]
     public void CreateEmbed_ShowsPositionAndQueuedTrack()
     {
         var current = new PlaybackTrack(

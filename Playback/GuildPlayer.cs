@@ -13,6 +13,7 @@ internal sealed class GuildPlayer
     private readonly SemaphoreSlim _availableTracks = new(0);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly IAudioClient _audioClient;
+    private readonly IAudioChannel _voiceChannel;
     private readonly IMessageChannel _textChannel;
     private readonly IFFmpegService _ffmpegService;
     private readonly int _maxQueuedTracks;
@@ -25,6 +26,7 @@ internal sealed class GuildPlayer
 
     public GuildPlayer(
         ulong voiceChannelId,
+        IAudioChannel voiceChannel,
         IAudioClient audioClient,
         IMessageChannel textChannel,
         IFFmpegService ffmpegService,
@@ -32,6 +34,7 @@ internal sealed class GuildPlayer
     )
     {
         VoiceChannelId = voiceChannelId;
+        _voiceChannel = voiceChannel;
         _audioClient = audioClient;
         _textChannel = textChannel;
         _ffmpegService = ffmpegService;
@@ -218,7 +221,7 @@ internal sealed class GuildPlayer
         _availableTracks.Release();
         try
         {
-            await _audioClient.StopAsync();
+            await _voiceChannel.DisconnectAsync();
         }
         finally
         {

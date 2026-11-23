@@ -50,7 +50,7 @@ public sealed class AudioService(
             if (player is null)
             {
                 var audioClient = await voiceChannel.ConnectAsync();
-                player = new GuildPlayer(voiceChannel.Id, audioClient, textChannel, ffmpegService, MaxQueuedTracks);
+                player = new GuildPlayer(voiceChannel.Id, voiceChannel, audioClient, textChannel, ffmpegService, MaxQueuedTracks);
                 _players[guildId] = player;
             }
             else if (player.VoiceChannelId != voiceChannel.Id)

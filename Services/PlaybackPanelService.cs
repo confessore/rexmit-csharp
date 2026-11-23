@@ -64,21 +64,36 @@ public sealed class PlaybackPanelService(
 
     public async Task RefreshAsync(ulong guildId)
     {
-        if (!_panels.TryGetValue(guildId, out var panel))
-        {
-            return;
-        }
+        var gate = _publishGates.GetOrAdd(guildId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
+        IMessageChannel? channel = null;
+        var replacePanel = false;
 
         try
         {
+            if (!_panels.TryGetValue(guildId, out var panel))
+            {
+                return;
+            }
+
+            channel = panel.Channel;
             await UpdateAsync(guildId, panel.Message);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Could not refresh the music panel for guild {GuildId}; attempting to replace it", guildId);
+            replacePanel = true;
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        if (replacePanel && channel is not null)
+        {
             try
             {
-                await PublishAsync(guildId, panel.Channel);
+                await PublishAsync(guildId, channel);
             }
             catch (Exception publishException)
             {
