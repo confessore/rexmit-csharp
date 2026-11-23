@@ -51,9 +51,11 @@ For local execution, set `DISCORD_TOKEN` in the process environment and run `dot
 - `/leave` — stop playback and disconnect.
 - `/help` — show command descriptions.
 
-The player panel shows the current title, artist/uploader, thumbnail, requester, queue, and playback position. Members in the bot's voice channel can add tracks with the panel form, pause/resume, skip, shuffle, move or remove queued tracks, clear the queue, and disconnect. Queue clearing and disconnect ask for confirmation. Position is measured from PCM audio sent to Discord and the panel refreshes about every 10 seconds.
+The player panel shows the current title, artist/uploader, thumbnail, requester, queue, and playback position. Members in the bot's voice channel can add tracks with the panel form, pause/resume, skip, shuffle, move or remove queued tracks, and clear the queue. Queue clearing and disconnect ask for confirmation. `/leave` and the panel's disconnect action are available even after you leave voice; a later `/play` reconnects if the previous voice session became stale. Position is measured from PCM audio sent to Discord and the panel refreshes about every 10 seconds.
 
 Each server has its own player and a maximum of 25 waiting tracks. Playlist links are treated as a single video, not expanded into a playlist. Only HTTPS YouTube and youtu.be links are accepted.
+
+When no human members remain in the bot's voice channel, Rexmit stops playback and disconnects after five minutes. If a human returns during that grace period, the cleanup is canceled; other bots do not count as human members.
 
 Playback status is exposed through the read-only `IAudioStatusReader` interface. No HTTP listener is started; an in-process host can consume the reader without gaining playback controls or requiring a database. A separate web process would need a read-only transport to the bot.
 

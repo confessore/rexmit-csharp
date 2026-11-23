@@ -92,7 +92,7 @@ public sealed class PlaybackControlModule(
     [SlashCommand("leave", "Stop playback and leave voice.", runMode: RunMode.Async)]
     public async Task LeaveAsync()
     {
-        await ConfirmActionAsync("leave", "Stop playback and disconnect?", ButtonStyle.Danger);
+        await ConfirmActionAsync("leave", "Stop playback and disconnect?", ButtonStyle.Danger, requireVoice: false);
     }
 
     [ComponentInteraction("rexmit:pause")]
@@ -229,7 +229,7 @@ public sealed class PlaybackControlModule(
     public Task ConfirmClearFromPanelAsync() => ConfirmActionAsync("clear", "Clear all waiting tracks?", ButtonStyle.Danger);
 
     [ComponentInteraction("rexmit:leave")]
-    public Task ConfirmLeaveFromPanelAsync() => ConfirmActionAsync("leave", "Stop playback and disconnect?", ButtonStyle.Danger);
+    public Task ConfirmLeaveFromPanelAsync() => ConfirmActionAsync("leave", "Stop playback and disconnect?", ButtonStyle.Danger, requireVoice: false);
 
     [ComponentInteraction("rexmit:clear-confirm:*")]
     public async Task ClearConfirmedAsync(string userId)
@@ -265,27 +265,47 @@ public sealed class PlaybackControlModule(
             return;
         }
 
-        if (!TryGetVoiceGuild(out var guildId, out var error))
+        if (Context.Guild is null)
+        {
+            await RespondAsync("This command is only available in a server.", ephemeral: true);
+            return;
+        }
+
+        await DeferAsync();
+        var guildId = Context.Guild.Id;
+        try
+        {
+            var left = await audioService.LeaveAsync(guildId);
+            await ModifyOriginalResponseAsync(properties =>
+            {
+                properties.Content = left ? "Stopped playback and disconnected." : "I am already disconnected.";
+                properties.Components = new ComponentBuilder().Build();
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Could not leave voice in guild {guildId}: {ex}");
+            await ModifyOriginalResponseAsync(properties =>
+            {
+                properties.Content = "I could not finish disconnecting. Try /leave again or check the bot logs.";
+                properties.Components = new ComponentBuilder().Build();
+            });
+        }
+
+        await playbackPanel.RefreshAsync(guildId);
+    }
+
+    private async Task ConfirmActionAsync(string action, string prompt, ButtonStyle style, bool requireVoice = true)
+    {
+        if (requireVoice && !TryGetVoiceGuild(out _, out var error))
         {
             await RespondAsync(error, ephemeral: true);
             return;
         }
 
-        await DeferAsync();
-        var left = await audioService.LeaveAsync(guildId);
-        await ModifyOriginalResponseAsync(properties =>
+        if (Context.Guild is null)
         {
-            properties.Content = left ? "Stopped playback and disconnected." : "I am not playing in this server.";
-            properties.Components = new ComponentBuilder().Build();
-        });
-        await playbackPanel.RefreshAsync(guildId);
-    }
-
-    private async Task ConfirmActionAsync(string action, string prompt, ButtonStyle style)
-    {
-        if (!TryGetVoiceGuild(out _, out var error))
-        {
-            await RespondAsync(error, ephemeral: true);
+            await RespondAsync("This command is only available in a server.", ephemeral: true);
             return;
         }
 

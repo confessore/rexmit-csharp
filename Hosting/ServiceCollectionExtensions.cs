@@ -33,6 +33,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<PlaybackPanelService>();
         services.AddSingleton<IPlaybackPanelService>(x => x.GetRequiredService<PlaybackPanelService>());
         services.AddHostedService<PlaybackPanelService>(x => x.GetRequiredService<PlaybackPanelService>());
+        services.AddHostedService<VoiceChannelIdleProtectionService>();
         services.AddHostedService<DiscordBotWorker>();
         return services;
     }

@@ -10,7 +10,7 @@ Update the configured checkout as its owner, including the pinned submodule, the
 
 Updates restart the service and interrupt current playback. Queues are in memory and are not backed up. The previous release is a code rollback only, not a data backup.
 
-The interactive player panel is also process-local. After a restart, use `/panel` to publish a new panel. Clear and disconnect controls ask the acting member to confirm; playback controls require that member to be in the bot's voice channel.
+The interactive player panel is also process-local. After a restart, use `/panel` to publish a new panel. Clear and disconnect controls ask the acting member to confirm. Playback controls require that member to be in the bot's voice channel, but `/leave` can be used from any server text channel to reset the bot's voice session.
 
 ## Diagnostics
 

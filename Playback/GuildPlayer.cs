@@ -41,6 +41,15 @@ internal sealed class GuildPlayer
 
     public ulong VoiceChannelId { get; }
 
+    public bool IsUsable => IsUsableState(
+        _audioClient.ConnectionState,
+        _worker.IsCompleted,
+        _shutdown.IsCancellationRequested
+    );
+
+    internal static bool IsUsableState(ConnectionState connectionState, bool workerCompleted, bool stopping) =>
+        connectionState == ConnectionState.Connected && !workerCompleted && !stopping;
+
     public bool TryEnqueue(PlaybackTrack track)
     {
         lock (_sync)
@@ -209,13 +218,13 @@ internal sealed class GuildPlayer
         _availableTracks.Release();
         try
         {
-            await _worker;
+            await _audioClient.StopAsync();
         }
         finally
         {
             try
             {
-                await _audioClient.StopAsync();
+                await _worker;
             }
             finally
             {
@@ -268,6 +277,10 @@ internal sealed class GuildPlayer
             catch (OperationCanceledException) when (trackCancellation.IsCancellationRequested)
             {
                 // Expected when /skip, /leave, or host shutdown cancels playback.
+            }
+            catch (Exception) when (trackCancellation.IsCancellationRequested)
+            {
+                // A cancelled audio stream can fail while the voice client is stopping.
             }
             catch (Exception ex)
             {

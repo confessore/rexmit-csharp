@@ -31,7 +31,23 @@ public sealed class AudioService(
         await gate.WaitAsync();
         try
         {
-            if (!_players.TryGetValue(guildId, out var player))
+            _players.TryGetValue(guildId, out var player);
+            if (player is not null && !player.IsUsable)
+            {
+                _players.TryRemove(guildId, out _);
+                try
+                {
+                    await player.StopAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Could not clean up stale voice player in guild {guildId}: {ex}");
+                }
+
+                player = null;
+            }
+
+            if (player is null)
             {
                 var audioClient = await voiceChannel.ConnectAsync();
                 player = new GuildPlayer(voiceChannel.Id, audioClient, textChannel, ffmpegService, MaxQueuedTracks);
@@ -54,11 +70,14 @@ public sealed class AudioService(
     }
 
     public GuildPlaybackStatus? GetStatus(ulong guildId) =>
-        _players.TryGetValue(guildId, out var player) ? player.GetStatus(guildId) : null;
+        _players.TryGetValue(guildId, out var player) && player.IsUsable ? player.GetStatus(guildId) : null;
 
     public IReadOnlyList<GuildPlaybackStatus> GetAllStatuses()
     {
-        var snapshots = _players.Select(pair => pair.Value.GetStatus(pair.Key)).ToArray();
+        var snapshots = _players
+            .Where(pair => pair.Value.IsUsable)
+            .Select(pair => pair.Value.GetStatus(pair.Key))
+            .ToArray();
         return Array.AsReadOnly(snapshots);
     }
 
